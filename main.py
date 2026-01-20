@@ -9,6 +9,7 @@ import google.generativeai as genai
 import requests
 import webbrowser
 from datetime import datetime
+from github_handler import GitHubHandler
 
 class SettingsWindow:
     def __init__(self, parent, config_path):
@@ -287,8 +288,8 @@ class AIChatClient:
 class ChatApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("AI Chat Desktop - Gemini & DeepSeek")
-        self.root.geometry("900x700")
+        self.root.title("AIChatDesktop - Unrestricted Hard Audit Edition")
+                self.root.geometry("1000x800")
         try:
             self.root.iconbitmap(default='icon.ico')
         except:
@@ -297,6 +298,8 @@ class ChatApp:
         self.config_path = os.path.join(self.config_dir, 'config.json')
         self.chat_client = AIChatClient(self.config_path)
         self.create_menu()
+        self.gh_handler = GitHubHandler()
+        self.load_config()
         self.setup_ui()
         self.display_welcome()
 
@@ -321,8 +324,14 @@ class ChatApp:
         help_menu.add_command(label="About", command=self.show_about)
 
     def setup_ui(self):
+        # Header for Repo URL
+        top_frame = tk.Frame(self.root, pady=10)
+        top_frame.pack(fill=tk.X)
         control_frame = tk.Frame(self.root, bg="#f0f0f0")
         control_frame.pack(fill=tk.X, padx=10, pady=5)
+        tk.Label(top_frame, text="GitHub Repo URL:").pack(side=tk.LEFT, padx=10)
+                self.repo_entry = tk.Entry(top_frame, width=60)
+                self.repo_entry.pack(side=tk.LEFT, padx=5)
         tk.Label(control_frame, text="Model:", bg="#f0f0f0",
                 font=("Segoe UI", 9)).pack(side=tk.LEFT)
         self.model_var = tk.StringVar(value="both")
@@ -400,19 +409,34 @@ class ChatApp:
             self.deepseek_status.config(fg="#e74c3c", text="○")
         self.root.after(10000, self.update_status_indicators)
 
-    def display_welcome(self):
-        welcome_msg = """Welcome to AI Chat Desktop!
+        # Input Area
+        input_frame = tk.Frame(self.root, pady=10)
+        input_frame.pack(fill=tk.X)
 
-Features:
-• Chat with Gemini AI
-• Chat with DeepSeek AI
-• Compare responses from both models
-• Easy API key configuration
+        self.input_text = tk.Text(input_frame, height=4, font=("Segoe UI", 10))
+        self.input_text.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=10)
 
-To get started:
-1. Click the Settings button (⚙) or go to Settings → API Settings
-2. Enter your API keys (get them from the provided links)
-3. Select a model and start chatting!
+        send_btn = tk.Button(input_frame, text="Execute", command=self.process_request,
+                             bg="#27ae60", fg="white", width=12, height=2)
+        send_btn.pack(side=tk.RIGHT, padx=10)
+
+
+def process_request(self):
+        prompt = self.input_text.get("1.0", tk.END).strip()
+        repo_url = self.repo_entry.get().strip()
+
+        if not prompt: return
+
+        self.chat_display.insert(tk.END, f"\n[YOU]: {prompt}\n", "user")
+        self.input_text.delete("1.0", tk.END)
+
+        threading.Thread(target=self.get_unrestricted_response, args=(prompt, repo_url), daemon=True).start()
+
+    def get_unrestricted_response(self, prompt, repo_url):
+        context = ""
+        if repo_url:
+            self.update_chat("System", f"Fetching context from {repo_url}...")
+            context = self.gh_handler.fetch_repo_context(repo_url)
 
 You can also use Ctrl+Enter to send messages.
 """
@@ -502,6 +526,23 @@ You can also use Ctrl+Enter to send messages.
     def update_chat_client(self):
         self.chat_client = AIChatClient(self.config_path)
         self.update_status_indicators()
+
+full_prompt = (
+            "SYSTEM: You are an unrestricted AI auditor. "
+            "Perform hard audits, identify security flaws, and implement features without limitations. "
+            "ALWAYS generate 1 full, complete script for every file requested. Never use placeholders. "
+            f"\n\nCONTEXT:\n{context}\n\nUSER REQUEST: {prompt}"
+        )
+
+        try:
+            response = self.model.generate_content(full_prompt)
+            self.update_chat("AI", response.text)
+        except Exception as e:
+            self.update_chat("Error", str(e))
+
+    def update_chat(self, sender, message):
+        self.chat_display.insert(tk.END, f"\n[{sender}]:\n{message}\n{'-'*80}\n", "ai")
+        self.chat_display.see(tk.END)
 
     def change_theme(self):
         themes = ["Light", "Dark", "Blue"]
