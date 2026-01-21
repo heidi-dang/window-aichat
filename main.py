@@ -492,6 +492,8 @@ class ChatApp:
         self.gh_handler = GitHubHandler(self.repo_cache_dir)
         self.message_queue = queue.Queue()
         self.status_update_id = None
+        self.view_mode = "full"
+        self.repo_context = ""
 
         self.setup_ui()
         self.display_welcome()
@@ -510,6 +512,11 @@ class ChatApp:
         file_menu.add_command(label="Clear Chat", command=self.clear_chat)
         file_menu.add_separator()
         file_menu.add_command(label="Exit", command=self.root.quit)
+
+        # View menu
+        view_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="View", menu=view_menu)
+        view_menu.add_command(label="Change View Mode", command=self.toggle_view_mode, accelerator="F11")
 
         # Developer Tools menu
         tools_menu = tk.Menu(menubar, tearoff=0)
@@ -538,6 +545,8 @@ class ChatApp:
         help_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="Help", menu=help_menu)
         help_menu.add_command(label="About", command=self.show_about)
+        
+        self.root.bind("<F11>", self.toggle_view_mode)
 
     def open_dev_tool(self, title: str, input_label: str, action_callback):
         """Generic function to open a developer tool window."""
@@ -564,15 +573,15 @@ class ChatApp:
 
 
     def setup_ui(self):
-        top_frame = tk.Frame(self.root, bg="#f0f0f0", pady=10)
-        top_frame.pack(fill=tk.X)
+        self.top_frame = tk.Frame(self.root, bg="#f0f0f0", pady=10)
+        self.top_frame.pack(fill=tk.X)
 
-        tk.Label(top_frame, text="GitHub Repo URL:", bg="#f0f0f0", font=("Segoe UI", 9)).pack(side=tk.LEFT, padx=10)
-        self.repo_entry = tk.Entry(top_frame, width=60, font=("Segoe UI", 9))
+        tk.Label(self.top_frame, text="GitHub Repo URL:", bg="#f0f0f0", font=("Segoe UI", 9)).pack(side=tk.LEFT, padx=10)
+        self.repo_entry = tk.Entry(self.top_frame, width=60, font=("Segoe UI", 9))
         self.repo_entry.pack(side=tk.LEFT, padx=5)
 
         fetch_btn = tk.Button(
-            top_frame,
+            self.top_frame,
             text="Fetch Repo",
             command=self.fetch_repo_context,
             bg="#3498db",
@@ -582,13 +591,13 @@ class ChatApp:
         )
         fetch_btn.pack(side=tk.LEFT, padx=5)
 
-        control_frame = tk.Frame(self.root, bg="#f0f0f0", padx=10, pady=5)
-        control_frame.pack(fill=tk.X)
+        self.control_frame = tk.Frame(self.root, bg="#f0f0f0", padx=10, pady=5)
+        self.control_frame.pack(fill=tk.X)
 
-        tk.Label(control_frame, text="Model:", bg="#f0f0f0", font=("Segoe UI", 9)).pack(side=tk.LEFT, padx=(0, 5))
+        tk.Label(self.control_frame, text="Model:", bg="#f0f0f0", font=("Segoe UI", 9)).pack(side=tk.LEFT, padx=(0, 5))
         self.model_var = tk.StringVar(value="both")
         model_combo = ttk.Combobox(
-            control_frame,
+            self.control_frame,
             textvariable=self.model_var,
             values=["gemini", "deepseek", "both"],
             width=15,
@@ -597,7 +606,7 @@ class ChatApp:
         model_combo.pack(side=tk.LEFT, padx=5)
 
         settings_btn = tk.Button(
-            control_frame,
+            self.control_frame,
             text="⚙ Settings",
             command=self.open_settings,
             bg="#7f8c8d",
@@ -607,7 +616,7 @@ class ChatApp:
         )
         settings_btn.pack(side=tk.RIGHT, padx=5)
 
-        status_frame = tk.Frame(control_frame, bg="#f0f0f0")
+        status_frame = tk.Frame(self.control_frame, bg="#f0f0f0")
         status_frame.pack(side=tk.RIGHT, padx=10)
 
         self.gemini_status = tk.Label(status_frame, text="●", fg="#e74c3c", bg="#f0f0f0", font=("Arial", 12))
@@ -620,14 +629,14 @@ class ChatApp:
 
         self.update_status_indicators()
 
-        chat_frame = tk.Frame(self.root)
-        chat_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+        self.chat_frame = tk.Frame(self.root)
+        self.chat_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
 
-        scrollbar = tk.Scrollbar(chat_frame)
+        scrollbar = tk.Scrollbar(self.chat_frame)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
 
         self.chat_display = tk.Text(
-            chat_frame,
+            self.chat_frame,
             wrap=tk.WORD,
             yscrollcommand=scrollbar.set,
             font=("Segoe UI", 10),
@@ -676,6 +685,17 @@ class ChatApp:
         )
         clear_btn.pack()
 
+    def toggle_view_mode(self, event=None):
+        """Toggle between Full and Focus view modes"""
+        if self.view_mode == "full":
+            self.top_frame.pack_forget()
+            self.control_frame.pack_forget()
+            self.view_mode = "focus"
+        else:
+            self.top_frame.pack(before=self.chat_frame, fill=tk.X)
+            self.control_frame.pack(before=self.chat_frame, fill=tk.X)
+            self.view_mode = "full"
+
     def _configure_text_tags(self):
         self.chat_display.tag_config("user", foreground="#2c3e50", font=("Segoe UI", 10, "bold"))
         self.chat_display.tag_config("gemini", foreground="#4285f4")
@@ -719,6 +739,7 @@ class ChatApp:
             while True:
                 msg_type, content = self.message_queue.get_nowait()
                 if msg_type == "repo_context":
+                    self.repo_context = content
                     self.display_message("system", f"Repository context loaded. Summary:\n{content[:200]}...")
                 elif msg_type == "error":
                     self.display_message("system", f"Error: {content}")
@@ -766,15 +787,19 @@ class ChatApp:
         thread.start()
 
     def get_ai_response(self, prompt: str, model: str):
+        full_prompt = prompt
+        if self.repo_context:
+            full_prompt = f"Context from GitHub Repository:\n{self.repo_context}\n\nUser Query:\n{prompt}"
+
         try:
             if model == "gemini":
-                response = self.chat_client.ask_gemini(prompt)
+                response = self.chat_client.ask_gemini(full_prompt)
                 self.display_message("Gemini", response)
             elif model == "deepseek":
-                response = self.chat_client.ask_deepseek(prompt)
+                response = self.chat_client.ask_deepseek(full_prompt)
                 self.display_message("DeepSeek", response)
             else:
-                responses = self.chat_client.ask_both(prompt)
+                responses = self.chat_client.ask_both(full_prompt)
                 self.display_message("Gemini", responses["gemini"])
                 self.display_message("DeepSeek", responses["deepseek"])
         except Exception as e:
