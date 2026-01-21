@@ -64,7 +64,7 @@ class SettingsWindow:
 
         self.window = tk.Toplevel(parent)
         self.window.title("API Settings - AI Chat Desktop")
-        self.window.geometry("550x500")
+        self.window.geometry("550x650")
         self.window.resizable(False, False)
         self.window.configure(bg="#f0f0f0")
         self.window.transient(parent)
@@ -91,6 +91,7 @@ class SettingsWindow:
         default_config = {
             "gemini_api_key": "",
             "deepseek_api_key": "",
+            "github_token": "",
             "gemini_model": "gemini-1.5-flash"
         }
         try:
@@ -117,6 +118,7 @@ class SettingsWindow:
 
         self._create_gemini_frame(main_frame)
         self._create_deepseek_frame(main_frame)
+        self._create_github_frame(main_frame)
         self._create_button_frame(main_frame)
 
         self.status_label = tk.Label(
@@ -192,6 +194,25 @@ class SettingsWindow:
         )
         deepseek_btn.pack(pady=(10, 0))
 
+    def _create_github_frame(self, parent):
+        gh_frame = tk.LabelFrame(
+            parent,
+            text=" GitHub Configuration ",
+            font=("Segoe UI", 10, "bold"),
+            bg="#f0f0f0",
+            fg="#2c3e50",
+            padx=10,
+            pady=10
+        )
+        gh_frame.pack(fill=tk.X, pady=(0, 15))
+
+        tk.Label(gh_frame, text="Personal Access Token:", bg="#f0f0f0", font=("Segoe UI", 9)).pack(anchor=tk.W)
+        self.github_token = tk.Entry(gh_frame, width=50, show="•", font=("Segoe UI", 9))
+        self.github_token.pack(fill=tk.X, pady=(2, 5))
+        
+        tk.Label(gh_frame, text="(Required for private repos and higher rate limits)", 
+                 bg="#f0f0f0", fg="#7f8c8d", font=("Segoe UI", 8)).pack(anchor=tk.W)
+
     def _create_button_frame(self, parent):
         button_frame = tk.Frame(parent, bg="#f0f0f0")
         button_frame.pack(pady=(20, 0))
@@ -237,12 +258,15 @@ class SettingsWindow:
         self.gemini_key.insert(0, self.config.get("gemini_api_key", ""))
         self.deepseek_key.delete(0, tk.END)
         self.deepseek_key.insert(0, self.config.get("deepseek_api_key", ""))
+        self.github_token.delete(0, tk.END)
+        self.github_token.insert(0, self.config.get("github_token", ""))
         self.gemini_model.set(self.config.get("gemini_model", "gemini-1.5-flash"))
 
     def save_settings(self):
         config = {
             "gemini_api_key": self.gemini_key.get().strip(),
             "deepseek_api_key": self.deepseek_key.get().strip(),
+            "github_token": self.github_token.get().strip(),
             "gemini_model": self.gemini_model.get()
         }
         try:
@@ -255,6 +279,8 @@ class SettingsWindow:
             if hasattr(self.parent, 'chat_client'):
                 self.parent.chat_client.config = config
                 self.parent.chat_client.configure_apis()
+            if hasattr(self.parent, 'update_github_handler'):
+                self.parent.update_github_handler(config.get("github_token", ""))
         except Exception as e:
             self.status_label.config(text=f"Error saving settings: {str(e)}", fg="#e74c3c")
 
@@ -404,6 +430,7 @@ class AIChatClient:
         default_config = {
             "gemini_api_key": "",
             "deepseek_api_key": "",
+            "github_token": "",
             "gemini_model": "gemini-1.5-flash"
         }
         try:
@@ -489,7 +516,8 @@ class ChatApp:
         os.makedirs(self.repo_cache_dir, exist_ok=True)
 
         self.chat_client = AIChatClient(self.config_path)
-        self.gh_handler = GitHubHandler(self.repo_cache_dir)
+        token = self.chat_client.config.get("github_token", "")
+        self.gh_handler = GitHubHandler(self.repo_cache_dir, token=token)
         self.message_queue = queue.Queue()
         self.status_update_id = None
         self.view_mode = "full"
@@ -840,6 +868,9 @@ class ChatApp:
     def update_chat_client(self):
         self.chat_client = AIChatClient(self.config_path)
         self.update_status_indicators()
+        
+    def update_github_handler(self, token: str):
+        self.gh_handler = GitHubHandler(self.repo_cache_dir, token=token)
 
     def change_theme(self):
         themes = ["Light", "Dark", "Blue"]
