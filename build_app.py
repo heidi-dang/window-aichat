@@ -2,24 +2,48 @@ import os
 import shutil
 import subprocess
 import sys
+import stat
+import time
+
+def remove_readonly(func, path, _):
+    """Helper to remove read-only files on Windows"""
+    try:
+        os.chmod(path, stat.S_IWRITE)
+        func(path)
+    except Exception:
+        pass
 
 def build():
     # 1. Clean previous build artifacts
-    # This fixes the "ValueError: Trying to collect PKG file ... into itself!" error
-    # by removing old build folders and spec files that might be conflicting.
     print("Cleaning previous build artifacts...")
+    
+    # Attempt to kill the app if it's running to release file locks
+    subprocess.run("taskkill /F /IM AIChatDesktop.exe", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    time.sleep(1) # Give OS time to release handles
+
     for folder in ['build', 'dist']:
         if os.path.exists(folder):
+            print(f"Removing {folder}...")
             try:
-                shutil.rmtree(folder)
-                print(f"Removed {folder}/")
+                shutil.rmtree(folder, onerror=remove_readonly)
             except Exception as e:
-                print(f"Error removing {folder}: {e}")
+                print(f"Initial delete failed: {e}. Retrying...")
+                time.sleep(2)
+                try:
+                    shutil.rmtree(folder, onerror=remove_readonly)
+                except Exception as e2:
+                    print(f"\n❌ ERROR: Could not delete '{folder}'.")
+                    print("Please ensure 'AIChatDesktop.exe' is closed and no folders are open in Explorer.")
+                    return
+            print(f"Removed {folder}/")
     
     spec_file = 'AIChatDesktop.spec'
     if os.path.exists(spec_file):
-        os.remove(spec_file)
-        print(f"Removed {spec_file}")
+        try:
+            os.remove(spec_file)
+            print(f"Removed {spec_file}")
+        except Exception:
+            pass
 
     # 2. Construct PyInstaller command
     cmd = [
@@ -50,9 +74,9 @@ def build():
     print("Starting build process...")
     try:
         subprocess.check_call(cmd)
-        print("\nBuild successful! Executable is in the 'dist/AIChatDesktop' folder.")
+        print("\n✅ Build successful! Executable is in the 'dist/AIChatDesktop' folder.")
     except subprocess.CalledProcessError as e:
-        print(f"\nBuild failed with error code {e.returncode}")
+        print(f"\n❌ Build failed with error code {e.returncode}")
 
 if __name__ == "__main__":
     build()
