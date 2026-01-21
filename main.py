@@ -773,6 +773,100 @@ If you are just chatting, just provide text.
                 self.ai_text.insert(tk.END, content)
                 self.apply_highlighting(self.ai_text, content, self.detect_language(self.selected_file))
 
+    def update_thinking_timer(self):
+        if self.thinking_start_time > 0:
+            elapsed = time.time() - self.thinking_start_time
+            self.status_label.config(text=f"AI Thinking... ({elapsed:.1f}s)")
+            self.after(100, self.update_thinking_timer)
+
+    def apply_current_change(self):
+        if not self.selected_file: return
+        
+        # Get content from AI text box (allows manual edits)
+        new_content = self.ai_text.get("1.0", tk.END).strip()
+        if not new_content: return
+
+        self.file_changes[self.selected_file] = new_content
+        
+        # Update tree tag to show it's modified in memory
+        if self.file_tree.exists(self.selected_file):
+            self.file_tree.item(self.selected_file, tags=("changed",))
+        
+        messagebox.showinfo("Applied", "Changes staged in memory. Click 'Save All Changes' to write to disk.")
+
+    def revert_current_file(self):
+        if self.selected_file and self.selected_file in self.file_changes:
+            del self.file_changes[self.selected_file]
+            self.file_tree.item(self.selected_file, tags=())
+            self.on_file_select(None) # Refresh
+            messagebox.showinfo("Reverted", "Changes for this file discarded.")
+
+    def save_all_changes(self):
+        if not self.file_changes:
+            messagebox.showinfo("Info", "No changes to save.")
+            return
+        
+        if messagebox.askyesno("Save All", f"Write changes to {len(self.file_changes)} files?"):
+            try:
+                for filepath, content in self.file_changes.items():
+                    with open(filepath, 'w', encoding='utf-8') as f:
+                        f.write(content)
+                    self.file_tree.item(filepath, tags=()) # Remove tag
+                
+                self.file_changes.clear()
+                self.on_file_select(None) # Refresh view
+                messagebox.showinfo("Success", "All files updated.")
+            except Exception as e:
+                messagebox.showerror("Error", str(e))
+
+    def reset_all_changes(self):
+        if messagebox.askyesno("Reset", "Discard all pending changes?"):
+            self.file_changes.clear()
+            for item in self.file_tree.get_children():
+                self.file_tree.item(item, tags=())
+            self.on_file_select(None)
+
+    def format_code(self):
+        if not self.selected_file:
+            return
+        
+        content = self.orig_text.get("1.0", tk.END).strip()
+        if not content: return
+
+        ext = os.path.splitext(self.selected_file)[1].lower()
+        formatted = None
+        error = None
+
+        try:
+            startupinfo = None
+            if os.name == 'nt':
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+
+            if ext in ['.py', '.pyw']:
+                cmd = ['black', '-', '-q']
+                res = subprocess.run(cmd, input=content, capture_output=True, text=True, encoding='utf-8', startupinfo=startupinfo)
+                if res.returncode == 0: formatted = res.stdout
+                else: error = res.stderr
+            elif ext in ['.js', '.ts', '.jsx', '.tsx', '.json', '.html', '.css']:
+                cmd = ['npx.cmd' if os.name == 'nt' else 'npx', 'prettier', '--stdin-filepath', self.selected_file]
+                res = subprocess.run(cmd, input=content, capture_output=True, text=True, encoding='utf-8', startupinfo=startupinfo)
+                if res.returncode == 0: formatted = res.stdout
+                else: error = res.stderr
+            else:
+                messagebox.showinfo("Format", f"No formatter configured for {ext}")
+                return
+
+            if formatted:
+                self.orig_text.delete("1.0", tk.END)
+                self.orig_text.insert(tk.END, formatted)
+            elif error:
+                messagebox.showerror("Format Error", error)
+        except FileNotFoundError:
+            messagebox.showerror("Error", "Formatter tool not found. Ensure 'black' (Python) or 'prettier' (JS) is installed and in PATH.")
+        except Exception as e:
+            messagebox.showerror("Error", str(e))
+
 
 class AIChatClient:
     def __init__(self, config_path: str):
