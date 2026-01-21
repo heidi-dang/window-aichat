@@ -10,6 +10,7 @@ import requests
 import webbrowser
 from datetime import datetime
 from typing import Optional, Dict, List
+import difflib
 import queue
 from github_handler import GitHubHandler
 from cryptography.fernet import Fernet
@@ -39,9 +40,10 @@ class SecureConfig:
         os.chmod(self.config_path, 0o600)
 
     def load_config(self) -> Dict[str, str]:
-        config = {
+        default_config = {
             "gemini_api_key": os.getenv('GEMINI_API_KEY', ''),
             "deepseek_api_key": os.getenv('DEEPSEEK_API_KEY', ''),
+            "github_token": os.getenv('GITHUB_TOKEN', ''),
             "gemini_model": os.getenv('GEMINI_MODEL', 'gemini-1.5-flash')
         }
         try:
@@ -50,17 +52,18 @@ class SecureConfig:
                     encrypted = f.read()
                 decrypted = self.cipher.decrypt(encrypted).decode()
                 file_config = json.loads(decrypted)
-                config.update(file_config)
+                default_config.update(file_config)
         except Exception as e:
-            print(f"Config error: {e}")
-        return config
+            print(f"Could not load or decrypt config file: {e}. Using defaults.")
+        return default_config
 
 
 class SettingsWindow:
     def __init__(self, parent, config_path):
         self.parent = parent
         self.config_path = config_path
-        self.config = self.load_config()
+        self.secure_config = SecureConfig(config_path)
+        self.config = self.secure_config.load_config()
 
         self.window = tk.Toplevel(parent)
         self.window.title("API Settings - AI Chat Desktop")
@@ -86,22 +89,6 @@ class SettingsWindow:
         x = (self.window.winfo_screenwidth() // 2) - (width // 2)
         y = (self.window.winfo_screenheight() // 2) - (height // 2)
         self.window.geometry(f'{width}x{height}+{x}+{y}')
-
-    def load_config(self) -> Dict[str, str]:
-        default_config = {
-            "gemini_api_key": "",
-            "deepseek_api_key": "",
-            "github_token": "",
-            "gemini_model": "gemini-1.5-flash"
-        }
-        try:
-            if os.path.exists(self.config_path):
-                with open(self.config_path, 'r') as f:
-                    config = json.load(f)
-                return {**default_config, **config}
-        except Exception as e:
-            print(f"Error loading config: {e}")
-        return default_config.copy()
 
     def create_widgets(self):
         main_frame = tk.Frame(self.window, bg="#f0f0f0", padx=20, pady=20)
@@ -273,8 +260,7 @@ class SettingsWindow:
             config_dir = os.path.dirname(self.config_path)
             if config_dir and not os.path.exists(config_dir):
                 os.makedirs(config_dir)
-            with open(self.config_path, 'w') as f:
-                json.dump(config, f, indent=2)
+            self.secure_config.save_config(config)
             self.status_label.config(text="Settings saved successfully!", fg="#2ecc71")
             if hasattr(self.parent, 'chat_client'):
                 self.parent.chat_client.config = config
@@ -418,29 +404,123 @@ class DevToolWindow(tk.Toplevel):
             self.status_label.config(text="Nothing to copy.")
 
 
+class CodeRefactorWindow(tk.Toplevel):
+    def __init__(self, parent, action_callback):
+        super().__init__(parent)
+        self.title("Code Refactor & Apply")
+        self.geometry("1100x800")
+        self.transient(parent)
+        self.grab_set()
+
+        self.action_callback = action_callback
+        self.original_content = ""
+        self.file_path = ""
+        self.new_content = ""
+
+        try:
+            self.iconbitmap(default='icon.ico')
+        except Exception:
+            pass
+
+        # Top frame for file selection
+        file_frame = tk.Frame(self, padx=10, pady=10)
+        file_frame.pack(fill=tk.X)
+        tk.Label(file_frame, text="File to Refactor:").pack(side=tk.LEFT)
+        self.path_var = tk.StringVar()
+        path_entry = tk.Entry(file_frame, textvariable=self.path_var, width=100, state='readonly')
+        path_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
+        browse_btn = tk.Button(file_frame, text="Browse...", command=self.browse_file)
+        browse_btn.pack(side=tk.LEFT)
+
+        # Diff view
+        diff_frame = tk.LabelFrame(self, text="Diff View", padx=10, pady=10)
+        diff_frame.pack(fill=tk.BOTH, expand=True, padx=10)
+        self.diff_text = scrolledtext.ScrolledText(diff_frame, wrap=tk.NONE, font=("Courier New", 10))
+        self.diff_text.pack(fill=tk.BOTH, expand=True)
+        self.diff_text.tag_config('added', foreground='green')
+        self.diff_text.tag_config('removed', foreground='red')
+        self.diff_text.tag_config('header', foreground='blue', font=("Courier New", 10, "bold"))
+        self.diff_text.config(state=tk.DISABLED)
+
+        # Bottom frame for buttons and status
+        bottom_frame = tk.Frame(self, padx=10, pady=10)
+        bottom_frame.pack(fill=tk.X)
+        self.run_btn = tk.Button(bottom_frame, text="Generate Refactor", command=self.run_refactor, bg="#2ecc71", fg="white", font=("Segoe UI", 10, "bold"))
+        self.run_btn.pack(side=tk.LEFT)
+        self.apply_btn = tk.Button(bottom_frame, text="Apply Changes", command=self.apply_changes, state=tk.DISABLED, bg="#3498db", fg="white", font=("Segoe UI", 10, "bold"))
+        self.apply_btn.pack(side=tk.LEFT, padx=10)
+        self.status_label = tk.Label(bottom_frame, text="Select a file to begin.")
+        self.status_label.pack(side=tk.LEFT, padx=10)
+
+    def browse_file(self):
+        filepath = filedialog.askopenfilename()
+        if not filepath:
+            return
+        self.file_path = filepath
+        self.path_var.set(filepath)
+        try:
+            with open(filepath, 'r', encoding='utf-8') as f:
+                self.original_content = f.read()
+            self.diff_text.config(state=tk.NORMAL)
+            self.diff_text.delete("1.0", tk.END)
+            self.diff_text.insert(tk.END, self.original_content)
+            self.diff_text.config(state=tk.DISABLED)
+            self.status_label.config(text=f"Loaded {len(self.original_content)} characters. Click 'Generate Refactor' to proceed.")
+            self.apply_btn.config(state=tk.DISABLED)
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to read file: {e}", parent=self)
+
+    def run_refactor(self):
+        if not self.original_content:
+            messagebox.showwarning("No File", "Please select a file first.", parent=self)
+            return
+        self.status_label.config(text="Requesting refactoring from AI...")
+        self.run_btn.config(state=tk.DISABLED)
+        self.apply_btn.config(state=tk.DISABLED)
+        self.update()
+        threading.Thread(target=self._execute_refactor, daemon=True).start()
+
+    def _execute_refactor(self):
+        try:
+            self.new_content = self.action_callback(self.original_content)
+            self.after(0, self.display_diff)
+        except Exception as e:
+            self.after(0, lambda: messagebox.showerror("Error", f"An error occurred: {e}", parent=self))
+
+    def display_diff(self):
+        self.diff_text.config(state=tk.NORMAL)
+        self.diff_text.delete("1.0", tk.END)
+        diff = difflib.unified_diff(self.original_content.splitlines(keepends=True), self.new_content.splitlines(keepends=True), fromfile='Original', tofile='Refactored')
+        has_changes = False
+        for line in diff:
+            has_changes = True
+            tag = 'header' if line.startswith(('---', '+++', '@@')) else 'added' if line.startswith('+') else 'removed' if line.startswith('-') else ''
+            self.diff_text.insert(tk.END, line, tag)
+        if not has_changes: self.diff_text.insert(tk.END, "AI did not suggest any changes.")
+        self.diff_text.config(state=tk.DISABLED)
+        self.status_label.config(text="Diff generated. Review the changes and click 'Apply Changes' to save.")
+        self.run_btn.config(state=tk.NORMAL)
+        if has_changes: self.apply_btn.config(state=tk.NORMAL)
+
+    def apply_changes(self):
+        if not self.new_content or not self.file_path: return
+        if messagebox.askyesno("Confirm Apply", f"Are you sure you want to overwrite the file?\n\n{self.file_path}", parent=self):
+            try:
+                with open(self.file_path, 'w', encoding='utf-8') as f: f.write(self.new_content)
+                self.status_label.config(text="Changes applied successfully!")
+                self.apply_btn.config(state=tk.DISABLED)
+                messagebox.showinfo("Success", "File has been updated.", parent=self)
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to write to file: {e}", parent=self)
+
 class AIChatClient:
     def __init__(self, config_path: str):
         self.config_path = config_path
-        self.config = self.load_config()
+        self.secure_config = SecureConfig(config_path)
+        self.config = self.secure_config.load_config()
         self.gemini_available = False
         self.deepseek_available = False
         self.configure_apis()
-
-    def load_config(self) -> Dict[str, str]:
-        default_config = {
-            "gemini_api_key": "",
-            "deepseek_api_key": "",
-            "github_token": "",
-            "gemini_model": "gemini-1.5-flash"
-        }
-        try:
-            if os.path.exists(self.config_path):
-                with open(self.config_path, 'r') as f:
-                    config = json.load(f)
-                return {**default_config, **config}
-        except Exception as e:
-            print(f"Error loading config: {e}")
-        return default_config.copy()
 
     def configure_apis(self):
         if self.config.get("gemini_api_key"):
@@ -592,7 +672,7 @@ class ChatApp:
     def tool_analyze_performance(self): self.open_dev_tool("Analyze Performance", "Code to analyze for performance", self.analyze_performance)
     def tool_recommend_packages(self): self.open_dev_tool("Recommend Packages", "Describe the task you need a package for", self.recommend_packages)
     def tool_explain_algorithm(self): self.open_dev_tool("Explain Algorithm", "Algorithm name or code to explain", self.explain_algorithm)
-    def tool_refactor_code(self): self.open_dev_tool("Refactor Code", "Code to refactor", self.refactor_code)
+    def tool_refactor_code(self): CodeRefactorWindow(self.root, self.refactor_code)
     def tool_git_helper(self): self.open_dev_tool("Git Helper", "Describe your Git problem or task", self.git_helper)
     def tool_generate_config(self): self.open_dev_tool("Generate Config", "Describe the configuration you need (e.g., 'nginx for a react app')", self.generate_config)
 
