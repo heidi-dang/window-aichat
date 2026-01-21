@@ -9,6 +9,7 @@ from pathlib import Path
 import google.generativeai as genai
 import requests
 import time
+import random
 import subprocess
 import webbrowser
 from datetime import datetime
@@ -989,11 +990,28 @@ class AIChatClient:
     def ask_gemini(self, prompt: str) -> str:
         if not self.gemini_available:
             return "Gemini API not configured. Please set your API key in Settings."
-        try:
-            response = self.gemini_model.generate_content(prompt)
-            return response.text
-        except Exception as e:
-            return f"Gemini Error: {str(e)}"
+
+        max_retries = 3
+        base_delay = 2  # Start with a 2-second delay
+
+        for attempt in range(max_retries):
+            try:
+                response = self.gemini_model.generate_content(prompt)
+                # The response might be empty if blocked.
+                if not response.parts:
+                    return "Gemini Error: Response was blocked, likely due to safety filters or an empty prompt."
+                return response.text
+            except Exception as e:
+                # Check if the error is a rate limit error
+                if "429" in str(e) and attempt < max_retries - 1:
+                    delay = base_delay * (2 ** attempt) + random.uniform(0, 1)
+                    print(f"Gemini API rate limit hit (429). Retrying in {delay:.2f} seconds...")
+                    time.sleep(delay)
+                else:
+                    # For other errors or if it's the last retry
+                    return f"Gemini Error: {str(e)}"
+        
+        return "Gemini Error: Failed to get a response after multiple retries due to rate limiting."
 
     def ask_deepseek(self, prompt: str) -> str:
         if not self.deepseek_available:
