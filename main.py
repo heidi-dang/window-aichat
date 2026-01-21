@@ -47,6 +47,7 @@ class SecureConfig:
             "deepseek_api_key": os.getenv('DEEPSEEK_API_KEY', ''),
             "github_token": os.getenv('GITHUB_TOKEN', ''),
             "gemini_model": os.getenv('GEMINI_MODEL', 'gemini-1.5-flash')
+            "gemini_model": os.getenv('GEMINI_MODEL', 'gemini-2.0-flash')
         }
         try:
             if os.path.exists(self.config_path):
@@ -139,6 +140,7 @@ class SettingsWindow:
         self.gemini_model = ttk.Combobox(
             gemini_frame,
             values=["gemini-1.5-flash", "gemini-1.5-pro", "gemini-2.0-flash"],
+            values=["gemini-2.0-flash", "gemini-2.0-pro-exp", "gemini-1.5-flash", "gemini-1.5-pro"],
             state="readonly",
             font=("Segoe UI", 9)
         )
@@ -283,6 +285,8 @@ class SettingsWindow:
             try:
                 genai.configure(api_key=gemini_key)
                 model = genai.GenerativeModel('gemini-1.5-flash')
+                model_name = self.gemini_model.get() or 'gemini-2.0-flash'
+                model = genai.GenerativeModel(model_name)
                 response = model.generate_content("Say 'TEST OK' only", generation_config={"max_output_tokens": 5})
                 results.append("✓ Gemini: Connected")
             except Exception as e:
