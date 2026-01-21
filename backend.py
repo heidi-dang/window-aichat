@@ -1,6 +1,8 @@
 import os
 import sys
 import logging
+import subprocess
+import asyncio
 from typing import Optional
 from unittest.mock import MagicMock
 
@@ -13,7 +15,7 @@ sys.modules["tkinter.messagebox"] = MagicMock()
 sys.modules["tkinter.filedialog"] = MagicMock()
 sys.modules["tkinter.simpledialog"] = MagicMock()
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Body, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -137,6 +139,70 @@ async def chat_endpoint(req: ChatRequest):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+# --- Terminal Endpoint (WebSocket) ---
+@app.websocket("/ws/terminal")
+async def terminal_websocket(websocket: WebSocket):
+    await websocket.accept()
+    
+    # Check for PTY support (Linux/macOS only)
+    try:
+        import pty
+    except ImportError:
+        await websocket.send_text("Error: Backend terminal requires Linux/macOS (pty module missing).\r\n")
+        await websocket.close()
+        return
+
+    # Spawn Shell with TERM environment variable for colors
+    master_fd, slave_fd = pty.openpty()
+    shell = os.environ.get("SHELL", "/bin/bash")
+    
+    # Important: Set TERM so tools know to output color
+    env = os.environ.copy()
+    env["TERM"] = "xterm-256color"
+
+    process = subprocess.Popen(
+        [shell],
+        preexec_fn=os.setsid,
+        stdin=slave_fd,
+        stdout=slave_fd,
+        stderr=slave_fd,
+        universal_newlines=True,
+        env=env
+    )
+    
+    os.close(slave_fd) # Close slave in parent
+
+    loop = asyncio.get_running_loop()
+
+    async def send_output():
+        try:
+            # Read from PTY and send to WebSocket
+            output = await loop.run_in_executor(None, lambda: os.read(master_fd, 10240))
+            if output:
+                await websocket.send_text(output.decode(errors='ignore'))
+            else:
+                # EOF
+                await websocket.close()
+        except Exception:
+            pass
+
+    # Register reader for PTY output
+    loop.add_reader(master_fd, lambda: asyncio.create_task(send_output()))
+
+    try:
+        while True:
+            # Receive from WebSocket and write to PTY
+            data = await websocket.receive_text()
+            os.write(master_fd, data.encode())
+    except WebSocketDisconnect:
+        pass
+    except Exception as e:
+        print(f"Terminal error: {e}")
+    finally:
+        loop.remove_reader(master_fd)
+        process.kill()
+        os.close(master_fd)
 
 if __name__ == "__main__":
     import uvicorn

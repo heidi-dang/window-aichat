@@ -40,7 +40,7 @@ npm install -D tailwindcss postcss autoprefixer
 npx tailwindcss init -p
 
 # Install Icons
-npm install lucide-react @monaco-editor/react axios clsx tailwind-merge
+npm install lucide-react @monaco-editor/react axios clsx tailwind-merge xterm xterm-addon-fit
 
 # 4. Generate Application Code
 echo -e "${GREEN}[4/6] Generating React components...${NC}"
@@ -85,6 +85,7 @@ body {
   font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
   overflow: hidden;
 }
+@import 'xterm/css/xterm.css';
 
 /* Custom Scrollbar */
 ::-webkit-scrollbar {
@@ -108,12 +109,14 @@ import React, { useState, useRef, useEffect } from 'react';
 import Sidebar from './components/Sidebar';
 import FileExplorer from './components/FileExplorer';
 import EditorArea from './components/EditorArea';
+import TerminalPanel from './components/TerminalPanel';
 import ChatWindow from './components/ChatWindow';
 import axios from 'axios';
 
 function App() {
   const [activeFile, setActiveFile] = useState(null); // { path, content, language }
   const [fileContent, setFileContent] = useState("");
+  const [isTerminalOpen, setIsTerminalOpen] = useState(true);
   const [messages, setMessages] = useState([
     { id: 1, sender: 'System', text: 'Welcome to AI Chat Web! Connect to Gemini or DeepSeek to start.', timestamp: new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) }
   ]);
@@ -197,7 +200,14 @@ function App() {
 
       {/* Center: Editor */}
       <div className="flex-1 flex flex-col min-w-0">
-        <EditorArea file={activeFile} content={fileContent} onSave={handleSaveFile} onChange={setFileContent} />
+        <div className="flex-1 overflow-hidden">
+          <EditorArea file={activeFile} content={fileContent} onSave={handleSaveFile} onChange={setFileContent} />
+        </div>
+        
+        {/* Terminal Section */}
+        <div className={\`border-t border-border bg-black transition-all duration-300 \${isTerminalOpen ? 'h-48' : 'h-8'}\`}>
+           <TerminalPanel isOpen={isTerminalOpen} onToggle={() => setIsTerminalOpen(!isTerminalOpen)} />
+        </div>
       </div>
 
       {/* Right: Chat & Tools */}
@@ -466,6 +476,107 @@ const EditorArea = ({ file, content, onSave, onChange }) => {
 };
 
 export default EditorArea;
+EOF
+
+# --- Terminal Component ---
+cat <<EOF > src/components/TerminalPanel.jsx
+import React, { useEffect, useRef } from 'react';
+import { Terminal } from 'xterm';
+import { FitAddon } from 'xterm-addon-fit';
+import { Terminal as TerminalIcon, ChevronUp, ChevronDown } from 'lucide-react';
+
+const TerminalPanel = ({ isOpen, onToggle }) => {
+  const terminalRef = useRef(null);
+  const xtermRef = useRef(null);
+  const fitAddonRef = useRef(null);
+  const wsRef = useRef(null);
+
+  useEffect(() => {
+    if (!isOpen || xtermRef.current) return;
+
+    // Initialize XTerm
+    const term = new Terminal({
+      theme: {
+        background: '#1e1e1e',
+        foreground: '#d4d4d4',
+        cursor: '#ffffff',
+        selection: '#264f78',
+        black: '#000000',
+        red: '#cd3131',
+        green: '#0dbc79',
+        yellow: '#e5e510',
+        blue: '#2472c8',
+        magenta: '#bc3fbc',
+        cyan: '#11a8cd',
+        white: '#e5e5e5',
+        brightBlack: '#666666',
+        brightRed: '#f14c4c',
+        brightGreen: '#23d18b',
+        brightYellow: '#f5f543',
+        brightBlue: '#3b8eea',
+        brightMagenta: '#d670d6',
+        brightCyan: '#29b8db',
+        brightWhite: '#e5e5e5'
+      },
+      fontSize: 13,
+      fontFamily: 'Consolas, monospace',
+      cursorBlink: true
+    });
+    
+    const fitAddon = new FitAddon();
+    term.loadAddon(fitAddon);
+    term.open(terminalRef.current);
+    fitAddon.fit();
+
+    xtermRef.current = term;
+    fitAddonRef.current = fitAddon;
+
+    // Connect WebSocket
+    const ws = new WebSocket('ws://localhost:8000/ws/terminal');
+    ws.onmessage = (event) => term.write(event.data);
+    term.onData((data) => ws.send(data));
+    wsRef.current = ws;
+
+    const handleResize = () => fitAddon.fit();
+    window.addEventListener('resize', handleResize);
+
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      ws.close();
+      term.dispose();
+      xtermRef.current = null;
+    };
+  }, [isOpen]);
+
+  // Re-fit when toggled
+  useEffect(() => {
+    if (isOpen && fitAddonRef.current) {
+      setTimeout(() => fitAddonRef.current.fit(), 100);
+    }
+  }, [isOpen]);
+
+  return (
+    <div className="flex flex-col h-full">
+      {/* Header */}
+      <div 
+        className="h-8 bg-input border-b border-border flex items-center justify-between px-4 cursor-pointer hover:bg-border transition-colors"
+        onClick={onToggle}
+      >
+        <div className="flex items-center gap-2 text-xs font-bold text-text_dim">
+          <TerminalIcon size={14} /> TERMINAL
+        </div>
+        {isOpen ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
+      </div>
+
+      {/* Terminal Container */}
+      <div className={\`flex-1 bg-black p-2 overflow-hidden \${!isOpen && 'hidden'}\`}>
+        <div ref={terminalRef} className="h-full w-full" />
+      </div>
+    </div>
+  );
+};
+
+export default TerminalPanel;
 EOF
 
 # --- Chat Window Component ---
