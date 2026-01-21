@@ -483,6 +483,7 @@ class CodeChatWindow(tk.Toplevel):
         self.file_changes = {}  # {filepath: new_content}
         self.selected_file = None
         self.is_diff_view = False
+        self.bind('<Control-f>', self.find_text)
 
         try:
             self.iconbitmap(default='icon.ico')
@@ -501,6 +502,8 @@ class CodeChatWindow(tk.Toplevel):
         
         self.diff_view_btn = tk.Button(toolbar, text="Show Diff", command=self.toggle_diff_view, bg="#ecf0f1")
         self.diff_view_btn.pack(side=tk.LEFT, padx=5)
+        
+        tk.Button(toolbar, text="🔍 Find", command=self.find_text, bg="#ecf0f1").pack(side=tk.LEFT, padx=5)
 
         self.status_label = tk.Label(toolbar, text="Ready", bg="#f0f0f0", fg="#7f8c8d")
         self.status_label.pack(side=tk.LEFT, padx=15)
@@ -764,6 +767,37 @@ class CodeChatWindow(tk.Toplevel):
             self.ai_text.insert(tk.END, "No changes detected.")
 
         self.ai_text.config(state=tk.DISABLED)
+
+    def find_text(self, event=None):
+        """Search text in the active code editor"""
+        target = self.orig_text
+        if self.is_diff_view:
+            target = self.ai_text
+            
+        search_str = simpledialog.askstring("Find", "Enter text to search:", parent=self)
+        if not search_str: return
+        
+        # Clear previous tags
+        target.tag_remove('search_match', '1.0', tk.END)
+        
+        start = '1.0'
+        count = 0
+        while True:
+            pos = target.search(search_str, start, stopindex=tk.END, nocase=True)
+            if not pos: break
+            
+            end = f"{pos}+{len(search_str)}c"
+            target.tag_add('search_match', pos, end)
+            if count == 0:
+                target.see(pos)
+            start = end
+            count += 1
+            
+        target.tag_config('search_match', background='yellow', foreground='black')
+        if count > 0:
+            self.status_label.config(text=f"Found {count} matches.")
+        else:
+            messagebox.showinfo("Find", "No matches found.", parent=self)
 
     def send_message(self):
         prompt = self.chat_input.get("1.0", tk.END).strip()
@@ -1297,6 +1331,7 @@ class ChatApp:
         ttk.Button(self.sidebar, text="⚙ Settings", command=self.open_settings, style="Secondary.TButton").pack(fill=tk.X, pady=5)
         ttk.Button(self.sidebar, text="Code Chat", command=self.tool_refactor_code, style="TButton").pack(fill=tk.X, pady=5)
         ttk.Button(self.sidebar, text="Clear Chat", command=self.clear_chat, style="Secondary.TButton").pack(fill=tk.X, pady=5)
+        ttk.Button(self.sidebar, text="Find in Chat", command=self.find_in_chat, style="Secondary.TButton").pack(fill=tk.X, pady=5)
 
         # --- Main Chat Area (Right) ---
         self.chat_area = tk.Frame(self.main_split, bg=self.colors["bg"])
@@ -1518,6 +1553,30 @@ class ChatApp:
             self.chat_display.delete("1.0", tk.END)
             self.chat_display.config(state=tk.DISABLED)
             self.display_welcome()
+
+    def find_in_chat(self):
+        """Search text in chat history"""
+        search_str = simpledialog.askstring("Find in Chat", "Enter text to search:", parent=self.root)
+        if not search_str: return
+        
+        self.chat_display.tag_remove('search_match', '1.0', tk.END)
+        
+        start = '1.0'
+        count = 0
+        while True:
+            pos = self.chat_display.search(search_str, start, stopindex=tk.END, nocase=True)
+            if not pos: break
+            
+            end = f"{pos}+{len(search_str)}c"
+            self.chat_display.tag_add('search_match', pos, end)
+            if count == 0:
+                self.chat_display.see(pos)
+            start = end
+            count += 1
+            
+        self.chat_display.tag_config('search_match', background='yellow', foreground='black')
+        if count == 0:
+            messagebox.showinfo("Find", "No matches found.")
 
     def export_chat(self):
         filename = filedialog.asksaveasfilename(
