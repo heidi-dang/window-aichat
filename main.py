@@ -615,7 +615,9 @@ If you are just chatting, just provide text.
             # If current file was changed, refresh view
             if self.selected_file in self.file_changes:
                 self.ai_text.delete("1.0", tk.END)
-                self.ai_text.insert(tk.END, self.file_changes[self.selected_file])
+                content = self.file_changes[self.selected_file]
+                self.ai_text.insert(tk.END, content)
+                self.apply_highlighting(self.ai_text, content, self.detect_language(self.selected_file))
 
     def apply_current_change(self):
         if not self.selected_file or self.selected_file not in self.file_changes:
