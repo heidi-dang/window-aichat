@@ -3,6 +3,7 @@ from tkinter import scrolledtext, ttk, messagebox, filedialog, simpledialog
 import threading
 import json
 import os
+import re
 import sys
 from pathlib import Path
 import google.generativeai as genai
@@ -404,114 +405,234 @@ class DevToolWindow(tk.Toplevel):
             self.status_label.config(text="Nothing to copy.")
 
 
-class CodeRefactorWindow(tk.Toplevel):
-    def __init__(self, parent, action_callback):
+class CodeChatWindow(tk.Toplevel):
+    def __init__(self, parent, chat_client):
         super().__init__(parent)
-        self.title("Code Refactor & Apply")
-        self.geometry("1100x800")
+        self.title("Code Chat Workspace")
+        self.geometry("1400x900")
         self.transient(parent)
-        self.grab_set()
-
-        self.action_callback = action_callback
-        self.original_content = ""
-        self.file_path = ""
-        self.new_content = ""
+        
+        self.chat_client = chat_client
+        self.current_folder = ""
+        self.file_changes = {}  # {filepath: new_content}
+        self.selected_file = None
 
         try:
             self.iconbitmap(default='icon.ico')
         except Exception:
             pass
 
-        # Top frame for file selection
-        file_frame = tk.Frame(self, padx=10, pady=10)
-        file_frame.pack(fill=tk.X)
-        tk.Label(file_frame, text="File to Refactor:").pack(side=tk.LEFT)
-        self.path_var = tk.StringVar()
-        path_entry = tk.Entry(file_frame, textvariable=self.path_var, width=100, state='readonly')
-        path_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
-        browse_btn = tk.Button(file_frame, text="Browse...", command=self.browse_file)
-        browse_btn.pack(side=tk.LEFT)
+        self.setup_ui()
 
-        # Diff view
-        diff_frame = tk.LabelFrame(self, text="Diff View", padx=10, pady=10)
-        diff_frame.pack(fill=tk.BOTH, expand=True, padx=10)
-        self.diff_text = scrolledtext.ScrolledText(diff_frame, wrap=tk.NONE, font=("Courier New", 10))
-        self.diff_text.pack(fill=tk.BOTH, expand=True)
-        self.diff_text.tag_config('added', foreground='green')
-        self.diff_text.tag_config('removed', foreground='red')
-        self.diff_text.tag_config('header', foreground='blue', font=("Courier New", 10, "bold"))
-        self.diff_text.config(state=tk.DISABLED)
+    def setup_ui(self):
+        # Toolbar
+        toolbar = tk.Frame(self, padx=5, pady=5, bg="#f0f0f0")
+        toolbar.pack(fill=tk.X)
+        
+        tk.Button(toolbar, text="📂 Open Folder", command=self.open_folder, bg="#ecf0f1").pack(side=tk.LEFT, padx=5)
+        tk.Button(toolbar, text="📄 Open File", command=self.open_file, bg="#ecf0f1").pack(side=tk.LEFT, padx=5)
+        self.status_label = tk.Label(toolbar, text="Ready", bg="#f0f0f0", fg="#7f8c8d")
+        self.status_label.pack(side=tk.LEFT, padx=15)
 
-        # Bottom frame for buttons and status
-        bottom_frame = tk.Frame(self, padx=10, pady=10)
-        bottom_frame.pack(fill=tk.X)
-        self.run_btn = tk.Button(bottom_frame, text="Generate Refactor", command=self.run_refactor, bg="#2ecc71", fg="white", font=("Segoe UI", 10, "bold"))
-        self.run_btn.pack(side=tk.LEFT)
-        self.apply_btn = tk.Button(bottom_frame, text="Apply Changes", command=self.apply_changes, state=tk.DISABLED, bg="#3498db", fg="white", font=("Segoe UI", 10, "bold"))
-        self.apply_btn.pack(side=tk.LEFT, padx=10)
-        self.status_label = tk.Label(bottom_frame, text="Select a file to begin.")
-        self.status_label.pack(side=tk.LEFT, padx=10)
+        # Main Splitter
+        self.main_paned = tk.PanedWindow(self, orient=tk.HORIZONTAL, sashwidth=4, bg="#bdc3c7")
+        self.main_paned.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
-    def browse_file(self):
+        # Left Pane: File List
+        left_frame = tk.Frame(self.main_paned)
+        self.main_paned.add(left_frame, width=250)
+        
+        tk.Label(left_frame, text="Explorer / Changes", font=("Segoe UI", 9, "bold")).pack(anchor="w", padx=2)
+        self.file_tree = ttk.Treeview(left_frame, selectmode="browse")
+        self.file_tree.pack(fill=tk.BOTH, expand=True)
+        self.file_tree.heading("#0", text="Files", anchor="w")
+        self.file_tree.bind("<<TreeviewSelect>>", self.on_file_select)
+
+        # Right Pane: Work Area
+        right_frame = tk.Frame(self.main_paned)
+        self.main_paned.add(right_frame)
+
+        # Code Splitter (Original vs AI)
+        self.code_paned = tk.PanedWindow(right_frame, orient=tk.HORIZONTAL, sashwidth=4, bg="#bdc3c7")
+        self.code_paned.pack(fill=tk.BOTH, expand=True)
+
+        # Original Code View
+        orig_frame = tk.LabelFrame(self.code_paned, text="Original Code")
+        self.code_paned.add(orig_frame, width=500)
+        self.orig_text = scrolledtext.ScrolledText(orig_frame, wrap=tk.NONE, font=("Consolas", 10))
+        self.orig_text.pack(fill=tk.BOTH, expand=True)
+
+        # AI Suggestion View
+        ai_frame = tk.LabelFrame(self.code_paned, text="AI Suggestion / Chat Response")
+        self.code_paned.add(ai_frame, width=500)
+        self.ai_text = scrolledtext.ScrolledText(ai_frame, wrap=tk.NONE, font=("Consolas", 10), bg="#f4f6f7")
+        self.ai_text.pack(fill=tk.BOTH, expand=True)
+
+        # Chat Input Area
+        input_frame = tk.Frame(right_frame, pady=5)
+        input_frame.pack(fill=tk.X)
+        
+        self.chat_input = tk.Text(input_frame, height=4, font=("Segoe UI", 10))
+        self.chat_input.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self.chat_input.bind("<Control-Return>", lambda e: self.send_message())
+
+        btn_frame = tk.Frame(input_frame)
+        btn_frame.pack(side=tk.RIGHT, padx=5)
+        
+        tk.Button(btn_frame, text="Send (Ctrl+Enter)", command=self.send_message, bg="#2ecc71", fg="white", font=("Segoe UI", 9, "bold")).pack(fill=tk.X, pady=2)
+        tk.Button(btn_frame, text="Apply Changes", command=self.apply_current_change, bg="#3498db", fg="white", font=("Segoe UI", 9)).pack(fill=tk.X, pady=2)
+
+    def open_folder(self):
+        folder = filedialog.askdirectory()
+        if folder:
+            self.current_folder = folder
+            self.refresh_file_tree()
+            self.status_label.config(text=f"Folder loaded: {folder}")
+
+    def open_file(self):
         filepath = filedialog.askopenfilename()
-        if not filepath:
+        if filepath:
+            self.current_folder = os.path.dirname(filepath)
+            self.refresh_file_tree(single_file=filepath)
+
+    def refresh_file_tree(self, single_file=None):
+        self.file_tree.delete(*self.file_tree.get_children())
+        if single_file:
+            self.file_tree.insert("", "end", single_file, text=os.path.basename(single_file), open=True)
             return
-        self.file_path = filepath
-        self.path_var.set(filepath)
-        try:
-            with open(filepath, 'r', encoding='utf-8') as f:
-                self.original_content = f.read()
-            self.diff_text.config(state=tk.NORMAL)
-            self.diff_text.delete("1.0", tk.END)
-            self.diff_text.insert(tk.END, self.original_content)
-            self.diff_text.config(state=tk.DISABLED)
-            self.status_label.config(text=f"Loaded {len(self.original_content)} characters. Click 'Generate Refactor' to proceed.")
-            self.apply_btn.config(state=tk.DISABLED)
-        except Exception as e:
-            messagebox.showerror("Error", f"Failed to read file: {e}", parent=self)
+        
+        for root, dirs, files in os.walk(self.current_folder):
+            # Skip .git and other hidden folders
+            dirs[:] = [d for d in dirs if not d.startswith('.')]
+            
+            rel_path = os.path.relpath(root, self.current_folder)
+            parent_node = "" if rel_path == "." else rel_path
+            
+            if parent_node and not self.file_tree.exists(parent_node):
+                # This simplifies tree building; for deep trees, proper parent lookup is needed
+                # For now, we just list files flat or simple hierarchy
+                pass 
 
-    def run_refactor(self):
-        if not self.original_content:
-            messagebox.showwarning("No File", "Please select a file first.", parent=self)
-            return
-        self.status_label.config(text="Requesting refactoring from AI...")
-        self.run_btn.config(state=tk.DISABLED)
-        self.apply_btn.config(state=tk.DISABLED)
-        self.update()
-        threading.Thread(target=self._execute_refactor, daemon=True).start()
+            for f in files:
+                full_path = os.path.join(root, f)
+                # Use full path as ID
+                self.file_tree.insert("", "end", full_path, text=f"{f} ({os.path.relpath(full_path, self.current_folder)})")
 
-    def _execute_refactor(self):
-        try:
-            self.new_content = self.action_callback(self.original_content)
-            self.after(0, self.display_diff)
-        except Exception as e:
-            self.after(0, lambda: messagebox.showerror("Error", f"An error occurred: {e}", parent=self))
-
-    def display_diff(self):
-        self.diff_text.config(state=tk.NORMAL)
-        self.diff_text.delete("1.0", tk.END)
-        diff = difflib.unified_diff(self.original_content.splitlines(keepends=True), self.new_content.splitlines(keepends=True), fromfile='Original', tofile='Refactored')
-        has_changes = False
-        for line in diff:
-            has_changes = True
-            tag = 'header' if line.startswith(('---', '+++', '@@')) else 'added' if line.startswith('+') else 'removed' if line.startswith('-') else ''
-            self.diff_text.insert(tk.END, line, tag)
-        if not has_changes: self.diff_text.insert(tk.END, "AI did not suggest any changes.")
-        self.diff_text.config(state=tk.DISABLED)
-        self.status_label.config(text="Diff generated. Review the changes and click 'Apply Changes' to save.")
-        self.run_btn.config(state=tk.NORMAL)
-        if has_changes: self.apply_btn.config(state=tk.NORMAL)
-
-    def apply_changes(self):
-        if not self.new_content or not self.file_path: return
-        if messagebox.askyesno("Confirm Apply", f"Are you sure you want to overwrite the file?\n\n{self.file_path}", parent=self):
+    def on_file_select(self, event):
+        selected = self.file_tree.selection()
+        if not selected: return
+        filepath = selected[0]
+        self.selected_file = filepath
+        
+        if os.path.isfile(filepath):
             try:
-                with open(self.file_path, 'w', encoding='utf-8') as f: f.write(self.new_content)
-                self.status_label.config(text="Changes applied successfully!")
-                self.apply_btn.config(state=tk.DISABLED)
-                messagebox.showinfo("Success", "File has been updated.", parent=self)
+                with open(filepath, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                self.orig_text.delete("1.0", tk.END)
+                self.orig_text.insert(tk.END, content)
+                
+                # Check if we have pending changes for this file
+                if filepath in self.file_changes:
+                    self.ai_text.delete("1.0", tk.END)
+                    self.ai_text.insert(tk.END, self.file_changes[filepath])
+                    self.status_label.config(text="Viewing pending changes.")
+                else:
+                    self.ai_text.delete("1.0", tk.END)
+                    self.status_label.config(text="Viewing original file.")
             except Exception as e:
-                messagebox.showerror("Error", f"Failed to write to file: {e}", parent=self)
+                self.orig_text.delete("1.0", tk.END)
+                self.orig_text.insert(tk.END, f"Error reading file: {e}")
+
+    def send_message(self):
+        prompt = self.chat_input.get("1.0", tk.END).strip()
+        if not prompt: return
+        
+        context = ""
+        if self.selected_file and os.path.isfile(self.selected_file):
+            context = self.orig_text.get("1.0", tk.END)
+            
+        full_prompt = f"""You are a coding assistant in an IDE.
+User Request: {prompt}
+
+Current File Context ({self.selected_file}):
+```
+{context}
+```
+
+IMPORTANT: If you generate code changes, you MUST use the following format for EACH file changed:
+FILE: <absolute_file_path>
+```language
+<new_code_content>
+```
+
+If the file path is relative, assume it is relative to the current workspace.
+If you are just chatting, just provide text.
+"""
+        self.status_label.config(text="AI is thinking...")
+        self.chat_input.delete("1.0", tk.END)
+        threading.Thread(target=self._process_ai_request, args=(full_prompt,), daemon=True).start()
+
+    def _process_ai_request(self, prompt):
+        try:
+            response = self.chat_client.ask_gemini(prompt)
+            self.after(0, self.handle_ai_response, response)
+        except Exception as e:
+            self.after(0, lambda: messagebox.showerror("Error", str(e)))
+
+    def handle_ai_response(self, response):
+        self.status_label.config(text="Response received.")
+        self.ai_text.delete("1.0", tk.END)
+        self.ai_text.insert(tk.END, response)
+        
+        # Parse for files
+        # Regex to find FILE: path \n ```code```
+        pattern = r"FILE:\s*(.*?)\s*\n```.*?\n(.*?)```"
+        matches = re.findall(pattern, response, re.DOTALL)
+        
+        if matches:
+            count = 0
+            for filepath, content in matches:
+                filepath = filepath.strip()
+                # Handle relative paths
+                if not os.path.isabs(filepath) and self.current_folder:
+                    filepath = os.path.join(self.current_folder, filepath)
+                elif not os.path.isabs(filepath) and self.selected_file:
+                    filepath = self.selected_file # Fallback to current file if path is ambiguous
+                
+                self.file_changes[filepath] = content.strip()
+                
+                # Highlight in tree
+                if self.file_tree.exists(filepath):
+                    self.file_tree.item(filepath, tags=("changed",))
+                else:
+                    # Add if not exists (new file)
+                    self.file_tree.insert("", "end", filepath, text=f"*{os.path.basename(filepath)}", tags=("changed",))
+                count += 1
+            
+            self.file_tree.tag_configure("changed", foreground="red", font=("Segoe UI", 9, "bold"))
+            messagebox.showinfo("Changes Generated", f"AI suggested changes for {count} file(s).\nSelect red files in the list to review.")
+            
+            # If current file was changed, refresh view
+            if self.selected_file in self.file_changes:
+                self.ai_text.delete("1.0", tk.END)
+                self.ai_text.insert(tk.END, self.file_changes[self.selected_file])
+
+    def apply_current_change(self):
+        if not self.selected_file or self.selected_file not in self.file_changes:
+            messagebox.showinfo("Info", "No pending changes for the selected file.")
+            return
+        
+        if messagebox.askyesno("Apply Changes", f"Overwrite {os.path.basename(self.selected_file)}?"):
+            try:
+                with open(self.selected_file, 'w', encoding='utf-8') as f:
+                    f.write(self.file_changes[self.selected_file])
+                
+                del self.file_changes[self.selected_file]
+                self.file_tree.item(self.selected_file, tags=()) # Remove red tag
+                self.on_file_select(None) # Refresh view
+                messagebox.showinfo("Success", "File updated.")
+            except Exception as e:
+                messagebox.showerror("Error", str(e))
 
 class AIChatClient:
     def __init__(self, config_path: str):
@@ -672,7 +793,7 @@ class ChatApp:
     def tool_analyze_performance(self): self.open_dev_tool("Analyze Performance", "Code to analyze for performance", self.analyze_performance)
     def tool_recommend_packages(self): self.open_dev_tool("Recommend Packages", "Describe the task you need a package for", self.recommend_packages)
     def tool_explain_algorithm(self): self.open_dev_tool("Explain Algorithm", "Algorithm name or code to explain", self.explain_algorithm)
-    def tool_refactor_code(self): CodeRefactorWindow(self.root, self.refactor_code)
+    def tool_refactor_code(self): CodeChatWindow(self.root, self.chat_client)
     def tool_git_helper(self): self.open_dev_tool("Git Helper", "Describe your Git problem or task", self.git_helper)
     def tool_generate_config(self): self.open_dev_tool("Generate Config", "Describe the configuration you need (e.g., 'nginx for a react app')", self.generate_config)
 
