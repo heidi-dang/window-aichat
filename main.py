@@ -8,6 +8,8 @@ import sys
 from pathlib import Path
 import google.generativeai as genai
 import requests
+import time
+import subprocess
 import webbrowser
 from datetime import datetime
 from typing import Optional, Dict, List
@@ -404,6 +406,69 @@ class DevToolWindow(tk.Toplevel):
         else:
             self.status_label.config(text="Nothing to copy.")
 
+# --- Helper Classes for Code Editor with Line Numbers ---
+class CustomText(tk.Text):
+    def __init__(self, *args, **kwargs):
+        tk.Text.__init__(self, *args, **kwargs)
+        self._orig = self._w + "_orig"
+        self.tk.call("rename", self._w, self._orig)
+        self.tk.createcommand(self._w, self._proxy)
+
+    def _proxy(self, *args):
+        cmd = (self._orig,) + args
+        try:
+            result = self.tk.call(cmd)
+        except Exception:
+            return None
+        if (args[0] in ("insert", "replace", "delete") or 
+            args[0:3] == ("mark", "set", "insert") or
+            args[0:2] == ("xview", "moveto") or
+            args[0:2] == ("xview", "scroll") or
+            args[0:2] == ("yview", "moveto") or
+            args[0:2] == ("yview", "scroll")
+        ):
+            self.event_generate("<<Change>>", when="tail")
+        return result
+
+class TextLineNumbers(tk.Canvas):
+    def __init__(self, *args, **kwargs):
+        tk.Canvas.__init__(self, *args, **kwargs)
+        self.textwidget = None
+
+    def attach(self, text_widget):
+        self.textwidget = text_widget
+
+    def redraw(self, *args):
+        self.delete("all")
+        i = self.textwidget.index("@0,0")
+        while True :
+            dline= self.textwidget.dlineinfo(i)
+            if dline is None: break
+            y = dline[1]
+            linenum = str(i).split(".")[0]
+            self.create_text(2,y,anchor="nw", text=linenum, fill="#606366", font=("Consolas", 9))
+            i = self.textwidget.index("%s+1line" % i)
+
+class CodeEditor(tk.Frame):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.text = CustomText(self, wrap=tk.NONE, font=("Consolas", 10), undo=True)
+        self.vsb = ttk.Scrollbar(self, orient="vertical", command=self.text.yview)
+        self.hsb = ttk.Scrollbar(self, orient="horizontal", command=self.text.xview)
+        self.linenumbers = TextLineNumbers(self, width=35, bg="#f0f0f0")
+        self.linenumbers.attach(self.text)
+
+        self.linenumbers.pack(side="left", fill="y")
+        self.vsb.pack(side="right", fill="y")
+        self.hsb.pack(side="bottom", fill="x")
+        self.text.pack(side="top", fill="both", expand=True)
+
+        self.text.configure(yscrollcommand=self.vsb.set, xscrollcommand=self.hsb.set)
+        self.text.bind("<<Change>>", self._on_change)
+        self.text.bind("<Configure>", self._on_change)
+
+    def _on_change(self, event):
+        self.linenumbers.redraw()
 
 class CodeChatWindow(tk.Toplevel):
     def __init__(self, parent, chat_client):
@@ -416,6 +481,7 @@ class CodeChatWindow(tk.Toplevel):
         self.current_folder = ""
         self.file_changes = {}  # {filepath: new_content}
         self.selected_file = None
+        self.is_diff_view = False
 
         try:
             self.iconbitmap(default='icon.ico')
@@ -431,8 +497,18 @@ class CodeChatWindow(tk.Toplevel):
         
         tk.Button(toolbar, text="📂 Open Folder", command=self.open_folder, bg="#ecf0f1").pack(side=tk.LEFT, padx=5)
         tk.Button(toolbar, text="📄 Open File", command=self.open_file, bg="#ecf0f1").pack(side=tk.LEFT, padx=5)
+        
+        self.diff_view_btn = tk.Button(toolbar, text="Show Diff", command=self.toggle_diff_view, bg="#ecf0f1")
+        self.diff_view_btn.pack(side=tk.LEFT, padx=5)
+
         self.status_label = tk.Label(toolbar, text="Ready", bg="#f0f0f0", fg="#7f8c8d")
         self.status_label.pack(side=tk.LEFT, padx=15)
+
+        self.lang_label = tk.Label(toolbar, text="Language: None", bg="#f0f0f0", fg="#7f8c8d", font=("Segoe UI", 8))
+        self.lang_label.pack(side=tk.RIGHT, padx=5)
+
+        self.progress = ttk.Progressbar(toolbar, mode='indeterminate', length=100)
+        self.progress.pack(side=tk.RIGHT, padx=5)
 
         # Main Splitter
         self.main_paned = tk.PanedWindow(self, orient=tk.HORIZONTAL, sashwidth=4, bg="#bdc3c7")
@@ -448,29 +524,43 @@ class CodeChatWindow(tk.Toplevel):
         self.file_tree.heading("#0", text="Files", anchor="w")
         self.file_tree.bind("<<TreeviewSelect>>", self.on_file_select)
 
-        # Right Pane: Work Area
-        right_frame = tk.Frame(self.main_paned)
-        self.main_paned.add(right_frame)
-
-        # Code Splitter (Original vs AI)
-        self.code_paned = tk.PanedWindow(right_frame, orient=tk.HORIZONTAL, sashwidth=4, bg="#bdc3c7")
-        self.code_paned.pack(fill=tk.BOTH, expand=True)
+        # Center Pane: Code Editors
+        self.code_paned = tk.PanedWindow(self.main_paned, orient=tk.HORIZONTAL, sashwidth=4, bg="#bdc3c7")
+        self.main_paned.add(self.code_paned, width=800)
 
         # Original Code View
         orig_frame = tk.LabelFrame(self.code_paned, text="Original Code")
         self.code_paned.add(orig_frame, width=500)
-        self.orig_text = scrolledtext.ScrolledText(orig_frame, wrap=tk.NONE, font=("Consolas", 10))
-        self.orig_text.pack(fill=tk.BOTH, expand=True)
+        self.orig_editor = CodeEditor(orig_frame)
+        self.orig_editor.pack(fill=tk.BOTH, expand=True)
+        self.orig_text = self.orig_editor.text # Alias for compatibility
 
         # AI Suggestion View
         ai_frame = tk.LabelFrame(self.code_paned, text="AI Suggestion / Chat Response")
         self.code_paned.add(ai_frame, width=500)
-        self.ai_text = scrolledtext.ScrolledText(ai_frame, wrap=tk.NONE, font=("Consolas", 10), bg="#f4f6f7")
-        self.ai_text.pack(fill=tk.BOTH, expand=True)
+        self.ai_editor = CodeEditor(ai_frame)
+        self.ai_editor.pack(fill=tk.BOTH, expand=True)
+        self.ai_text = self.ai_editor.text # Alias for compatibility
+        self.ai_text.config(bg="#f4f6f7")
+
+        # Right Pane: Chat Interface
+        chat_frame = tk.Frame(self.main_paned, bg="#f0f0f0")
+        self.main_paned.add(chat_frame, width=350)
+
+        tk.Label(chat_frame, text="Chat History", font=("Segoe UI", 9, "bold")).pack(anchor="w", padx=5, pady=2)
+        self.chat_history = scrolledtext.ScrolledText(chat_frame, wrap=tk.WORD, font=("Segoe UI", 9), state=tk.DISABLED)
+        self.chat_history.pack(fill=tk.BOTH, expand=True, padx=5, pady=2)
+        
+        # Configure chat tags
+        self.chat_history.tag_config("user", foreground="#2980b9", font=("Segoe UI", 9, "bold"))
+        self.chat_history.tag_config("ai", foreground="#27ae60", font=("Segoe UI", 9, "bold"))
+        self.chat_history.tag_config("system", foreground="#7f8c8d", font=("Segoe UI", 9, "italic"))
 
         # Chat Input Area
-        input_frame = tk.Frame(right_frame, pady=5)
-        input_frame.pack(fill=tk.X)
+        input_frame = tk.Frame(chat_frame, pady=5)
+        input_frame.pack(fill=tk.X, padx=5, pady=5)
+        
+        tk.Label(input_frame, text="Ask AI:", font=("Segoe UI", 8)).pack(anchor="w")
         
         self.chat_input = tk.Text(input_frame, height=4, font=("Segoe UI", 10))
         self.chat_input.pack(side=tk.LEFT, fill=tk.X, expand=True)
@@ -479,8 +569,10 @@ class CodeChatWindow(tk.Toplevel):
         btn_frame = tk.Frame(input_frame)
         btn_frame.pack(side=tk.RIGHT, padx=5)
         
-        tk.Button(btn_frame, text="Send (Ctrl+Enter)", command=self.send_message, bg="#2ecc71", fg="white", font=("Segoe UI", 9, "bold")).pack(fill=tk.X, pady=2)
-        tk.Button(btn_frame, text="Apply Changes", command=self.apply_current_change, bg="#3498db", fg="white", font=("Segoe UI", 9)).pack(fill=tk.X, pady=2)
+        self.send_btn = tk.Button(btn_frame, text="Send (Ctrl+Enter)", command=self.send_message, bg="#2ecc71", fg="white", font=("Segoe UI", 9, "bold"))
+        self.send_btn.pack(fill=tk.X, pady=2)
+        self.apply_btn = tk.Button(btn_frame, text="Apply Changes", command=self.apply_current_change, bg="#3498db", fg="white", font=("Segoe UI", 9))
+        self.apply_btn.pack(fill=tk.X, pady=2)
 
     def open_folder(self):
         folder = filedialog.askdirectory()
@@ -501,8 +593,6 @@ class CodeChatWindow(tk.Toplevel):
             self.file_tree.insert("", "end", single_file, text=os.path.basename(single_file), open=True)
             return
         
-        self.git_status_map = self.get_git_status()
-        
         for root, dirs, files in os.walk(self.current_folder):
             # Skip .git and other hidden folders
             dirs[:] = [d for d in dirs if not d.startswith('.')]
@@ -521,12 +611,6 @@ class CodeChatWindow(tk.Toplevel):
                 display_text = f"{f} ({os.path.relpath(full_path, self.current_folder)})"
                 tags = []
                 
-                # Check git status
-                if full_path in self.git_status_map:
-                    stat = self.git_status_map[full_path]
-                    if 'M' in stat: tags.append("git_modified"); display_text += " [M]"
-                    elif '?' in stat: tags.append("git_untracked"); display_text += " [U]"
-                    elif 'A' in stat: tags.append("git_added"); display_text += " [A]"
                 
                 self.file_tree.insert("", "end", full_path, text=display_text, tags=tuple(tags))
 
@@ -607,7 +691,7 @@ class CodeChatWindow(tk.Toplevel):
                 
                 # Check if we have pending changes for this file
                 if filepath in self.file_changes:
-                    self.ai_text.delete("1.0", tk.END)
+                    self.ai_text.delete("1.0", tk.END) 
                     ai_content = self.file_changes[filepath]
                     self.ai_text.insert(tk.END, ai_content)
                     self.apply_highlighting(self.ai_text, ai_content, language)
@@ -706,6 +790,14 @@ If the file path is relative, assume it is relative to the current workspace.
 If you are just chatting, just provide text.
 """
         self.status_label.config(text="AI is thinking...")
+        
+        # Update Chat History
+        self.chat_history.config(state=tk.NORMAL)
+        self.chat_history.insert(tk.END, f"\nYou: {prompt}\n", "user")
+        self.chat_history.insert(tk.END, "AI is thinking...\n", "system")
+        self.chat_history.config(state=tk.DISABLED)
+        self.chat_history.see(tk.END)
+
         self.thinking_start_time = time.time()
         self.update_thinking_timer()
         self.progress.start(10)
@@ -725,14 +817,20 @@ If you are just chatting, just provide text.
         self.progress.stop()
         self.status_label.config(text="Response received.")
         self.send_btn.config(state=tk.NORMAL)
+        
+        # Update Chat History (Remove "Thinking..." and add response)
+        self.chat_history.config(state=tk.NORMAL)
+        # Simple hack: delete last line (Thinking...)
+        self.chat_history.delete("end-2l", "end-1c") 
+        self.chat_history.insert(tk.END, f"AI: {response}\n", "ai")
+        self.chat_history.insert(tk.END, "-"*40 + "\n", "system")
+        self.chat_history.config(state=tk.DISABLED)
+        self.chat_history.see(tk.END)
 
         # Reset to code view when new response arrives
         self.is_diff_view = False
         self.diff_view_btn.config(text="Show Diff")
         self.apply_btn.config(state=tk.NORMAL)
-
-        self.ai_text.delete("1.0", tk.END)
-        self.ai_text.insert(tk.END, response)
         
         # Parse for files
         # Regex to find FILE: path \n ```code```
@@ -759,14 +857,13 @@ If you are just chatting, just provide text.
                     self.file_tree.insert("", "end", filepath, text=f"*{os.path.basename(filepath)}", tags=("changed",))
                 count += 1
 
-            messagebox.showinfo("Changes Generated", f"AI suggested changes for {count} file(s).\nSelect red files in the list to review.")
+            # Automatically show the first changed file if available
+            if count > 0 and self.selected_file in self.file_changes:
+                self.on_file_select(None)
+                messagebox.showinfo("Changes Generated", f"AI suggested changes for {count} file(s).\nReviewing {os.path.basename(self.selected_file)}.")
+            elif count > 0:
+                messagebox.showinfo("Changes Generated", f"AI suggested changes for {count} file(s).\nSelect red files in the list to review.")
             
-            # If current file was changed, refresh view
-            if self.selected_file in self.file_changes:
-                self.ai_text.delete("1.0", tk.END)
-                content = self.file_changes[self.selected_file]
-                self.ai_text.insert(tk.END, content)
-                self.apply_highlighting(self.ai_text, content, self.detect_language(self.selected_file))
 
     def update_thinking_timer(self):
         if self.thinking_start_time > 0:
@@ -1608,6 +1705,121 @@ Include:
         """Analyze performance bottlenecks"""
         prompt = f"""Analyze the performance of the following code:
 
+Code:
+```
+{code}
+```
+
+Provide:
+1. Time complexity analysis (Big O)
+2. Space complexity analysis (Big O)
+3. Identification of bottlenecks
+4. Concrete optimization strategies with refactored code examples"""
+        return self.chat_client.ask_gemini(prompt)
+
+    def check_security(self, code: str) -> str:
+        """Scan code for security vulnerabilities"""
+        prompt = f"""Check the following code for security vulnerabilities.
+
+Code:
+```
+{code}
+```
+
+Identify:
+1. A list of potential vulnerabilities (e.g., SQL Injection, XSS, etc.).
+2. For each vulnerability, explain the risk.
+3. Provide a corrected or more secure version of the code.
+4. Mention relevant OWASP Top 10 categories."""
+        return self.chat_client.ask_gemini(prompt)
+
+    def recommend_packages(self, requirement: str) -> str:
+        """Get package and dependency recommendations"""
+        prompt = f"""Recommend packages/libraries for the following requirement. Assume Python unless another language is specified.
+
+Requirement: {requirement}
+
+Provide:
+1. Top 3 package recommendations
+2. Pros/cons of each
+3. Installation commands
+4. A simple usage example for the top recommendation"""
+        return self.chat_client.ask_gemini(prompt)
+
+    def explain_algorithm(self, algorithm_input: str) -> str:
+        """Explain algorithms with complexity analysis"""
+        prompt = f"""Explain the algorithm provided either by name or as a code snippet.
+
+Algorithm/Code:
+{algorithm_input}
+
+Provide:
+1. Step-by-step explanation
+2. Time and Space complexity (Big O notation)
+3. Common use cases
+4. If code is provided, offer a Python implementation if it's not already."""
+        return self.chat_client.ask_gemini(prompt)
+
+    def refactor_code(self, code: str) -> str:
+        """Refactor code with design patterns"""
+        prompt = f"""Refactor the following code to improve its quality.
+
+Code:
+```
+{code}
+```
+
+Apply:
+1. Clean code practices (e.g., SOLID, DRY).
+2. Improve readability and maintainability.
+3. Apply relevant design patterns if applicable.
+
+Provide:
+- Refactored code
+- A brief explanation of the key changes and their benefits."""
+        return self.chat_client.ask_gemini(prompt)
+
+    def git_helper(self, task: str) -> str:
+        """Generate git commands and explain workflows"""
+        prompt = f"""I need help with Git. My task or problem is:
+{task}
+
+Provide:
+1. The necessary Git commands in sequence.
+2. A step-by-step explanation of what each command does.
+3. Any common pitfalls or things to watch out for."""
+        return self.chat_client.ask_gemini(prompt)
+
+    def generate_config(self, requirements: str) -> str:
+        """Generate configuration files"""
+        prompt = f"""Generate a configuration file based on these requirements:
+{requirements}
+
+Include:
+1. The complete configuration file content.
+2. Comments explaining important settings.
+3. Security best practices if applicable."""
+        return self.chat_client.ask_gemini(prompt)
+
+
+
+def main():
+    root = tk.Tk()
+    app = ChatApp(root)
+    root.protocol("WM_DELETE_WINDOW", app.on_closing)
+
+    root.update_idletasks()
+    width = root.winfo_width()
+    height = root.winfo_height()
+    x = (root.winfo_screenwidth() // 2) - (width // 2)
+    y = (root.winfo_screenheight() // 2) - (height // 2)
+    root.geometry(f'{width}x{height}+{x}+{y}')
+
+    root.mainloop()
+
+
+if __name__ == "__main__":
+    main()
 Code:
 ```
 {code}
