@@ -573,6 +573,8 @@ class CodeChatWindow(tk.Toplevel):
         self.send_btn.pack(fill=tk.X, pady=2)
         self.apply_btn = tk.Button(btn_frame, text="Apply Changes", command=self.apply_current_change, bg="#3498db", fg="white", font=("Segoe UI", 9))
         self.apply_btn.pack(fill=tk.X, pady=2)
+        self.revert_btn = tk.Button(btn_frame, text="Revert Changes", command=self.revert_current_file, bg="#e74c3c", fg="white", font=("Segoe UI", 9))
+        self.revert_btn.pack(fill=tk.X, pady=2)
 
     def open_folder(self):
         folder = filedialog.askdirectory()
