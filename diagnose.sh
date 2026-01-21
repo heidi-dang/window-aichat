@@ -25,7 +25,11 @@ fi
 
 # 3. Check Ports
 echo -e "\n[3] Checking Ports (8080 & 8000)..."
-PORTS=$(sudo netstat -tulpn | grep -E ':(8080|8000)')
+if command -v netstat >/dev/null; then
+    PORTS=$(sudo netstat -tulpn | grep -E ':(8080|8000)')
+else
+    PORTS=$(sudo ss -tulpn | grep -E ':(8080|8000)')
+fi
 if [[ $PORTS == *":8080"* ]]; then
     echo "✅ Port 8080 (Frontend) is LISTENING"
 else

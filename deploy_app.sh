@@ -25,7 +25,7 @@ echo -e "${BLUE}=== Starting AI Chat Deployment ===${NC}"
 # --- 1. System Updates & Dependencies ---
 echo -e "${GREEN}[1/7] Installing System Dependencies...${NC}"
 sudo apt-get update -y
-sudo apt-get install -y python3-pip python3-venv nodejs npm nginx git ufw acl
+sudo apt-get install -y python3-pip python3-venv nodejs npm nginx git ufw acl net-tools
 
 # Install Node.js LTS if version is too old
 if [ "$(node -v | cut -d. -f1 | tr -d v)" -lt 18 ]; then
