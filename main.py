@@ -3,14 +3,12 @@ from tkinter import scrolledtext, ttk, messagebox, filedialog, simpledialog
 import threading
 import json
 import os
-import subprocess
 import re
 import sys
 from pathlib import Path
 import google.generativeai as genai
 import requests
 import webbrowser
-import time
 from datetime import datetime
 from typing import Optional, Dict, List
 import difflib
@@ -250,10 +248,7 @@ class SettingsWindow:
         self.deepseek_key.insert(0, self.config.get("deepseek_api_key", ""))
         self.github_token.delete(0, tk.END)
         self.github_token.insert(0, self.config.get("github_token", ""))
-        saved_model = self.config.get("gemini_model", "gemini-2.0-flash")
-        if "1.5" in saved_model:
-            saved_model = "gemini-2.0-flash"
-        self.gemini_model.set(saved_model)
+        self.gemini_model.set(self.config.get("gemini_model", "gemini-1.5-flash"))
 
     def save_settings(self):
         config = {
@@ -286,17 +281,11 @@ class SettingsWindow:
         if gemini_key:
             try:
                 genai.configure(api_key=gemini_key)
-                target_model = self.gemini_model.get()
-                if not target_model: target_model = 'gemini-2.0-flash'
-                model = genai.GenerativeModel(target_model)
+                model = genai.GenerativeModel('gemini-1.5-flash')
                 response = model.generate_content("Say 'TEST OK' only", generation_config={"max_output_tokens": 5})
-                results.append(f"✓ Gemini ({target_model}): Connected")
+                results.append("✓ Gemini: Connected")
             except Exception as e:
-                err_msg = str(e)
-                if "404" in err_msg:
-                    results.append(f"✗ Gemini: Model {target_model} not found")
-                else:
-                    results.append(f"✗ Gemini: {err_msg[:40]}...")
+                results.append(f"✗ Gemini: {str(e)[:50]}")
         else:
             results.append("○ Gemini: No key provided")
 
@@ -427,8 +416,6 @@ class CodeChatWindow(tk.Toplevel):
         self.current_folder = ""
         self.file_changes = {}  # {filepath: new_content}
         self.selected_file = None
-        self.thinking_start_time = 0
-        self.git_status_map = {}
 
         try:
             self.iconbitmap(default='icon.ico')
@@ -439,122 +426,61 @@ class CodeChatWindow(tk.Toplevel):
 
     def setup_ui(self):
         # Toolbar
-        toolbar = tk.Frame(self, padx=5, pady=5, bg="#3c3c3c")
+        toolbar = tk.Frame(self, padx=5, pady=5, bg="#f0f0f0")
         toolbar.pack(fill=tk.X)
         
-        tk.Button(toolbar, text="📂 Open Folder", command=self.open_folder, bg="#505050", fg="white", relief=tk.FLAT).pack(side=tk.LEFT, padx=5)
-        tk.Button(toolbar, text="📄 Open File", command=self.open_file, bg="#505050", fg="white", relief=tk.FLAT).pack(side=tk.LEFT, padx=5)
-        self.status_label = tk.Label(toolbar, text="Ready", fg="#cccccc", bg="#3c3c3c")
+        tk.Button(toolbar, text="📂 Open Folder", command=self.open_folder, bg="#ecf0f1").pack(side=tk.LEFT, padx=5)
+        tk.Button(toolbar, text="📄 Open File", command=self.open_file, bg="#ecf0f1").pack(side=tk.LEFT, padx=5)
+        self.status_label = tk.Label(toolbar, text="Ready", bg="#f0f0f0", fg="#7f8c8d")
         self.status_label.pack(side=tk.LEFT, padx=15)
-        self.lang_label = tk.Label(toolbar, text="Language: None", font=("Segoe UI", 9, "bold"), bg="#3c3c3c", fg="white")
-        self.lang_label.pack(side=tk.RIGHT, padx=10)
 
         # Main Splitter
-        self.main_paned = ttk.PanedWindow(self, orient=tk.HORIZONTAL)
+        self.main_paned = tk.PanedWindow(self, orient=tk.HORIZONTAL, sashwidth=4, bg="#bdc3c7")
         self.main_paned.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
         # Left Pane: File List
         left_frame = tk.Frame(self.main_paned)
         self.main_paned.add(left_frame, width=250)
         
-        tk.Label(left_frame, text="Explorer / Changes", font=("Segoe UI", 9, "bold"), bg="#1e1e1e", fg="white").pack(anchor="w", padx=2)
+        tk.Label(left_frame, text="Explorer / Changes", font=("Segoe UI", 9, "bold")).pack(anchor="w", padx=2)
         self.file_tree = ttk.Treeview(left_frame, selectmode="browse")
         self.file_tree.pack(fill=tk.BOTH, expand=True)
         self.file_tree.heading("#0", text="Files", anchor="w")
         self.file_tree.bind("<<TreeviewSelect>>", self.on_file_select)
-        
-        # Version Control Tags
-        self.file_tree.tag_configure("git_modified", foreground="#e2c08d") # Gold
-        self.file_tree.tag_configure("git_untracked", foreground="#73c991") # Green
-        self.file_tree.tag_configure("git_added", foreground="#569cd6") # Blue
-        self.file_tree.tag_configure("changed", foreground="#ff5555", font=("Segoe UI", 9, "bold"))
 
         # Right Pane: Work Area
         right_frame = tk.Frame(self.main_paned)
         self.main_paned.add(right_frame)
 
         # Code Splitter (Original vs AI)
-        self.code_paned = ttk.PanedWindow(right_frame, orient=tk.HORIZONTAL)
+        self.code_paned = tk.PanedWindow(right_frame, orient=tk.HORIZONTAL, sashwidth=4, bg="#bdc3c7")
         self.code_paned.pack(fill=tk.BOTH, expand=True)
 
         # Original Code View
-        orig_frame = tk.LabelFrame(self.code_paned, text="Original Code", fg="white", bg="#1e1e1e")
+        orig_frame = tk.LabelFrame(self.code_paned, text="Original Code")
         self.code_paned.add(orig_frame, width=500)
-        self.orig_text = scrolledtext.ScrolledText(orig_frame, wrap=tk.NONE, font=("Consolas", 10), bg="#1e1e1e", fg="#d4d4d4", insertbackground="white", relief=tk.FLAT, borderwidth=0)
+        self.orig_text = scrolledtext.ScrolledText(orig_frame, wrap=tk.NONE, font=("Consolas", 10))
         self.orig_text.pack(fill=tk.BOTH, expand=True)
 
         # AI Suggestion View
-        ai_frame = tk.LabelFrame(self.code_paned, text="AI Suggestion / Chat Response", fg="white", bg="#1e1e1e")
+        ai_frame = tk.LabelFrame(self.code_paned, text="AI Suggestion / Chat Response")
         self.code_paned.add(ai_frame, width=500)
-        self.ai_text = scrolledtext.ScrolledText(ai_frame, wrap=tk.NONE, font=("Consolas", 10), bg="#252526", fg="#d4d4d4", insertbackground="white", relief=tk.FLAT, borderwidth=0)
+        self.ai_text = scrolledtext.ScrolledText(ai_frame, wrap=tk.NONE, font=("Consolas", 10), bg="#f4f6f7")
         self.ai_text.pack(fill=tk.BOTH, expand=True)
 
         # Chat Input Area
         input_frame = tk.Frame(right_frame, pady=5)
         input_frame.pack(fill=tk.X)
         
-        self.chat_input = tk.Text(input_frame, height=4, font=("Segoe UI", 10), bg="#3c3c3c", fg="white", insertbackground="white", relief=tk.FLAT)
+        self.chat_input = tk.Text(input_frame, height=4, font=("Segoe UI", 10))
         self.chat_input.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        self.chat_input.bind("<Return>", self.on_enter_press)
-        self.chat_input.bind("<Shift-Return>", self.on_shift_enter)
+        self.chat_input.bind("<Control-Return>", lambda e: self.send_message())
 
         btn_frame = tk.Frame(input_frame)
         btn_frame.pack(side=tk.RIGHT, padx=5)
         
-        self.send_btn = tk.Button(btn_frame, text="Send ⏎", command=self.send_message, bg="#007acc", fg="white", font=("Segoe UI", 9, "bold"), relief=tk.FLAT)
-        self.send_btn.pack(fill=tk.X, pady=2)
-        
-        tk.Button(btn_frame, text="Apply Edit", command=self.apply_current_change, bg="#2ecc71", fg="white", relief=tk.FLAT).pack(fill=tk.X, pady=2)
-        tk.Button(btn_frame, text="Revert File", command=self.revert_current_file, bg="#e74c3c", fg="white", relief=tk.FLAT).pack(fill=tk.X, pady=2)
-        
-        # Bottom Action Bar
-        action_bar = tk.Frame(self, padx=5, pady=5, bg="#3c3c3c")
-        action_bar.pack(fill=tk.X)
-        
-        tk.Button(action_bar, text="Save All Changes", command=self.save_all_changes, bg="#007acc", fg="white", relief=tk.FLAT).pack(side=tk.LEFT, padx=5)
-        tk.Button(action_bar, text="Reset All", command=self.reset_all_changes, bg="#e74c3c", fg="white", relief=tk.FLAT).pack(side=tk.LEFT, padx=5)
-        tk.Button(action_bar, text="Format Code", command=self.format_code, bg="#9b59b6", fg="white", relief=tk.FLAT).pack(side=tk.LEFT, padx=5)
-        
-        self.progress = ttk.Progressbar(action_bar, mode='indeterminate', length=200)
-        self.progress.pack(side=tk.RIGHT, padx=10)
-
-        self._configure_syntax_tags(self.orig_text)
-        self._configure_syntax_tags(self.ai_text)
-
-    def on_enter_press(self, event):
-        self.send_message()
-        return "break" # Prevents default newline insertion
-
-    def on_shift_enter(self, event):
-        # Let the default behavior (insert newline) happen
-        pass
-
-    def _configure_syntax_tags(self, text_widget):
-        # Syntax Highlighting Colors
-        # VS Code Dark Theme inspired
-        text_widget.tag_configure("token_keyword", foreground="#569cd6") # Blue
-        text_widget.tag_configure("token_string", foreground="#ce9178") # Orange/Red
-        text_widget.tag_configure("token_comment", foreground="#6a9955", font=("Consolas", 10, "italic")) # Green
-        text_widget.tag_configure("token_number", foreground="#b5cea8") # Light Green
-        text_widget.tag_configure("token_class", foreground="#4ec9b0", font=("Consolas", 10, "bold")) # Teal
-        text_widget.tag_configure("token_function", foreground="#dcdcaa") # Yellow
-
-    def get_git_status(self):
-        if not self.current_folder: return {}
-        try:
-            if not os.path.exists(os.path.join(self.current_folder, ".git")): return {}
-            # Run git status --porcelain
-            result = subprocess.run(["git", "status", "--porcelain"], cwd=self.current_folder, capture_output=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
-            status_map = {}
-            for line in result.stdout.splitlines():
-                if len(line) > 3:
-                    status = line[:2]
-                    path = line[3:].strip().strip('"') # Handle basic quoting
-                    full_path = os.path.join(self.current_folder, path)
-                    status_map[full_path] = status
-            return status_map
-        except Exception:
-            return {}
+        tk.Button(btn_frame, text="Send (Ctrl+Enter)", command=self.send_message, bg="#2ecc71", fg="white", font=("Segoe UI", 9, "bold")).pack(fill=tk.X, pady=2)
+        tk.Button(btn_frame, text="Apply Changes", command=self.apply_current_change, bg="#3498db", fg="white", font=("Segoe UI", 9)).pack(fill=tk.X, pady=2)
 
     def open_folder(self):
         folder = filedialog.askdirectory()
@@ -661,6 +587,11 @@ class CodeChatWindow(tk.Toplevel):
         if not selected: return
         filepath = selected[0]
         self.selected_file = filepath
+
+        # Reset view state on new file selection
+        self.is_diff_view = False
+        self.diff_view_btn.config(text="Show Diff")
+        self.apply_btn.config(state=tk.NORMAL)
         
         # Detect Language
         language = self.detect_language(filepath)
@@ -687,6 +618,65 @@ class CodeChatWindow(tk.Toplevel):
             except Exception as e:
                 self.orig_text.delete("1.0", tk.END)
                 self.orig_text.insert(tk.END, f"Error reading file: {e}")
+
+    def toggle_diff_view(self):
+        if not self.selected_file or self.selected_file not in self.file_changes:
+            messagebox.showinfo("Info", "No AI-generated changes available for this file to create a diff.", parent=self)
+            return
+
+        self.is_diff_view = not self.is_diff_view
+
+        if self.is_diff_view:
+            # Show the diff
+            self.diff_view_btn.config(text="Show Code")
+            self.apply_btn.config(state=tk.DISABLED)
+            
+            original_content = self.orig_text.get("1.0", tk.END)
+            new_content = self.file_changes[self.selected_file]
+            self.display_diff(original_content, new_content)
+        else:
+            # Show the full code
+            self.diff_view_btn.config(text="Show Diff")
+            self.apply_btn.config(state=tk.NORMAL)
+            
+            self.ai_text.config(state=tk.NORMAL)
+            self.ai_text.delete("1.0", tk.END)
+            new_content = self.file_changes[self.selected_file]
+            self.ai_text.insert(tk.END, new_content)
+            self.apply_highlighting(self.ai_text, new_content, self.detect_language(self.selected_file))
+
+    def display_diff(self, original_content, new_content):
+        import difflib
+        self.ai_text.config(state=tk.NORMAL)
+        self.ai_text.delete("1.0", tk.END)
+        
+        for tag in self.ai_text.tag_names():
+            if tag.startswith("token_"):
+                self.ai_text.tag_remove(tag, "1.0", tk.END)
+
+        diff = difflib.unified_diff(
+            original_content.splitlines(keepends=True),
+            new_content.splitlines(keepends=True),
+            fromfile='Original',
+            tofile='AI Suggestion'
+        )
+
+        has_changes = False
+        for line in diff:
+            has_changes = True
+            if line.startswith('+') and not line.startswith('+++'):
+                self.ai_text.insert(tk.END, line, 'diff_add')
+            elif line.startswith('-') and not line.startswith('---'):
+                self.ai_text.insert(tk.END, line, 'diff_remove')
+            elif line.startswith('@@'):
+                self.ai_text.insert(tk.END, line, 'diff_header')
+            else:
+                self.ai_text.insert(tk.END, line)
+        
+        if not has_changes:
+            self.ai_text.insert(tk.END, "No changes detected.")
+
+        self.ai_text.config(state=tk.DISABLED)
 
     def send_message(self):
         prompt = self.chat_input.get("1.0", tk.END).strip()
@@ -735,6 +725,11 @@ If you are just chatting, just provide text.
         self.progress.stop()
         self.status_label.config(text="Response received.")
         self.send_btn.config(state=tk.NORMAL)
+
+        # Reset to code view when new response arrives
+        self.is_diff_view = False
+        self.diff_view_btn.config(text="Show Diff")
+        self.apply_btn.config(state=tk.NORMAL)
 
         self.ai_text.delete("1.0", tk.END)
         self.ai_text.insert(tk.END, response)
@@ -880,6 +875,7 @@ class AIChatClient:
     def configure_apis(self):
         if self.config.get("gemini_api_key"):
             try:
+                import google.generativeai as genai
                 genai.configure(api_key=self.config["gemini_api_key"])
                 self.gemini_model = genai.GenerativeModel(self.config["gemini_model"])
                 self.gemini_available = True
@@ -914,6 +910,7 @@ class AIChatClient:
             "stream": False
         }
         try:
+            import requests
             response = requests.post(
                 "https://api.deepseek.com/chat/completions",
                 headers=headers,
@@ -948,21 +945,89 @@ class ChatApp:
         self.config_dir = os.path.join(os.path.expanduser('~'), '.aichatdesktop')
         self.config_path = os.path.join(self.config_dir, 'config.json')
         self.repo_cache_dir = os.path.join(self.config_dir, 'repo_cache')
-        os.makedirs(self.repo_cache_dir, exist_ok=True)
-
-        self.chat_client = AIChatClient(self.config_path)
-        token = self.chat_client.config.get("github_token", "")
-        self.gh_handler = GitHubHandler(self.repo_cache_dir, token=token)
+        
+        # Initialize placeholders
+        self.chat_client = None
+        self.gh_handler = None
         self.message_queue = queue.Queue()
         self.status_update_id = None
         self.view_mode = "full"
         self.repo_context = ""
 
+        # Setup UI immediately
         self.setup_styles()
         self.apply_dark_theme()
         self.setup_ui()
+        self.create_menu()
+        
+        # Show loading message
+        self.display_message("System", "Initializing AI Engine...")
+        
+        # Defer backend loading to allow UI to render first
+        self.root.after(100, self.initialize_backend)
+
+    def initialize_backend(self):
+        """Load heavy modules in background"""
+        os.makedirs(self.repo_cache_dir, exist_ok=True)
+        self.chat_client = AIChatClient(self.config_path)
+        token = self.chat_client.config.get("github_token", "")
+        
+        from github_handler import GitHubHandler
+        self.gh_handler = GitHubHandler(self.repo_cache_dir, token=token)
+        
         self.display_welcome()
         self.process_queue()
+        self.update_status_indicators()
+
+    def create_menu(self):
+        """Create application menu with developer tools"""
+        menubar = tk.Menu(self.root)
+        self.root.config(menu=menubar)
+
+        # File menu
+        file_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="File", menu=file_menu)
+        file_menu.add_command(label="Export Chat...", command=self.export_chat)
+        file_menu.add_separator()
+        file_menu.add_command(label="Clear Chat", command=self.clear_chat)
+        file_menu.add_separator()
+        file_menu.add_command(label="Exit", command=self.root.quit)
+
+        # View menu
+        view_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="View", menu=view_menu)
+        view_menu.add_command(label="Toggle Sidebar (Focus Mode)", command=self.toggle_view_mode, accelerator="F11")
+        view_menu.add_command(label="Change Theme", command=self.change_theme)
+
+        # Developer Tools menu
+        tools_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="Developer Tools", menu=tools_menu)
+
+        tools_menu.add_command(label="Analyze Code...", command=self.tool_analyze_code)
+        tools_menu.add_command(label="Generate Documentation...", command=self.tool_generate_docs)
+        tools_menu.add_command(label="Debug Error...", command=self.tool_debug_error)
+        tools_menu.add_command(label="Generate Unit Tests...", command=self.tool_generate_tests)
+        tools_menu.add_separator()
+        tools_menu.add_command(label="SQL Optimizer...", command=self.tool_optimize_sql)
+        tools_menu.add_command(label="Design DB Schema...", command=self.tool_design_db_schema)
+        tools_menu.add_command(label="Regex Builder...", command=self.tool_build_regex)
+        tools_menu.add_separator()
+        tools_menu.add_command(label="Generate API Endpoint...", command=self.tool_generate_api_endpoint)
+        tools_menu.add_command(label="Security Check...", command=self.tool_check_security)
+        tools_menu.add_command(label="Performance Analysis...", command=self.tool_analyze_performance)
+        tools_menu.add_separator()
+        tools_menu.add_command(label="Recommend Packages...", command=self.tool_recommend_packages)
+        tools_menu.add_command(label="Explain Algorithm...", command=self.tool_explain_algorithm)
+        tools_menu.add_command(label="Refactor Code...", command=self.tool_refactor_code)
+        tools_menu.add_command(label="Git Helper...", command=self.tool_git_helper)
+        tools_menu.add_command(label="Generate Config...", command=self.tool_generate_config)
+
+        # Help menu
+        help_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="Help", menu=help_menu)
+        help_menu.add_command(label="About", command=self.show_about)
+        
+        self.root.bind("<F11>", self.toggle_view_mode)
 
     def setup_styles(self):
         """Define Sendbird-inspired color palette and styles"""
@@ -1108,7 +1173,6 @@ class ChatApp:
         self.deepseek_status = tk.Label(status_frame, text="● DeepSeek", fg="#e74c3c", bg=self.colors["sidebar"], font=("Segoe UI", 9))
         self.deepseek_status.pack(anchor="w")
         
-        self.update_status_indicators()
 
         # Bottom Sidebar Controls
         tk.Frame(self.sidebar, bg=self.colors["sidebar"]).pack(fill=tk.BOTH, expand=True) # Spacer
@@ -1179,12 +1243,11 @@ class ChatApp:
     def toggle_view_mode(self, event=None):
         """Toggle between Full and Focus view modes"""
         if self.view_mode == "full":
-            self.top_frame.pack_forget()
-            self.control_frame.pack_forget()
+            self.main_split.forget(self.sidebar)
             self.view_mode = "focus"
         else:
-            self.top_frame.pack(before=self.chat_frame, fill=tk.X)
-            self.control_frame.pack(before=self.chat_frame, fill=tk.X)
+            self.main_split.add(self.sidebar, before=self.chat_area, width=300)
+            self.sidebar.pack_propagate(False)
             self.view_mode = "full"
 
     def _configure_text_tags(self):
@@ -1218,13 +1281,13 @@ class ChatApp:
         self.chat_display.tag_config("left_align", justify='left')
 
     def update_status_indicators(self):
-        if self.gemini_status.winfo_exists():
+        if self.gemini_status.winfo_exists() and self.chat_client:
             if self.chat_client.gemini_available:
                 self.gemini_status.config(fg="#2ecc71", text="●")
             else:
                 self.gemini_status.config(fg="#e74c3c", text="○")
 
-        if self.deepseek_status.winfo_exists():
+        if self.deepseek_status.winfo_exists() and self.chat_client:
             if self.chat_client.deepseek_available:
                 self.deepseek_status.config(fg="#2ecc71", text="●")
             else:
@@ -1287,6 +1350,11 @@ class ChatApp:
 
     def send_message(self):
         user_input = self.input_text.get("1.0", tk.END).strip()
+        
+        if not self.chat_client:
+            messagebox.showwarning("Loading", "AI Engine is still initializing. Please wait a moment.")
+            return
+            
         if not user_input:
             return
 
@@ -1358,6 +1426,7 @@ class ChatApp:
         self.update_status_indicators()
         
     def update_github_handler(self, token: str):
+        from github_handler import GitHubHandler
         self.gh_handler = GitHubHandler(self.repo_cache_dir, token=token)
 
     def change_theme(self):
