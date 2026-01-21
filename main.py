@@ -721,9 +721,9 @@ class CodeChatWindow(tk.Toplevel):
             self.diff_view_btn.config(text="Show Code")
             self.apply_btn.config(state=tk.DISABLED)
             
-            original_content = self.orig_text.get("1.0", tk.END)
+            original_content = self.orig_text.get("1.0", "end-1c")
             new_content = self.file_changes[self.selected_file]
-            self.display_diff(original_content, new_content)
+            self.display_side_by_side_diff(original_content, new_content)
         else:
             # Show the full code
             self.diff_view_btn.config(text="Show Diff")
@@ -734,39 +734,67 @@ class CodeChatWindow(tk.Toplevel):
             new_content = self.file_changes[self.selected_file]
             self.ai_text.insert(tk.END, new_content)
             self.apply_highlighting(self.ai_text, new_content, self.detect_language(self.selected_file))
+            
+            # Reset Original text tags
+            for tag in ["diff_removed", "diff_added", "diff_changed"]:
+                self.orig_text.tag_remove(tag, "1.0", tk.END)
+            
+            self._unbind_sync_scroll()
 
-    def display_diff(self, original_content, new_content):
-        import difflib
+    def display_side_by_side_diff(self, original_content, new_content):
+        # Configure tags
+        self.orig_text.tag_config("diff_removed", background="#ffcccc", foreground="black") 
+        self.orig_text.tag_config("diff_changed", background="#fff5cc", foreground="black")
+        
+        self.ai_text.tag_config("diff_added", background="#ccffcc", foreground="black")
+        self.ai_text.tag_config("diff_changed", background="#fff5cc", foreground="black")
+
+        # Update AI text
         self.ai_text.config(state=tk.NORMAL)
         self.ai_text.delete("1.0", tk.END)
+        self.ai_text.insert(tk.END, new_content)
         
-        for tag in self.ai_text.tag_names():
-            if tag.startswith("token_"):
-                self.ai_text.tag_remove(tag, "1.0", tk.END)
-
-        diff = difflib.unified_diff(
-            original_content.splitlines(keepends=True),
-            new_content.splitlines(keepends=True),
-            fromfile='Original',
-            tofile='AI Suggestion'
-        )
-
-        has_changes = False
-        for line in diff:
-            has_changes = True
-            if line.startswith('+') and not line.startswith('+++'):
-                self.ai_text.insert(tk.END, line, 'diff_add')
-            elif line.startswith('-') and not line.startswith('---'):
-                self.ai_text.insert(tk.END, line, 'diff_remove')
-            elif line.startswith('@@'):
-                self.ai_text.insert(tk.END, line, 'diff_header')
-            else:
-                self.ai_text.insert(tk.END, line)
+        # Calculate diff
+        orig_lines = original_content.splitlines()
+        new_lines = new_content.splitlines()
         
-        if not has_changes:
-            self.ai_text.insert(tk.END, "No changes detected.")
+        matcher = difflib.SequenceMatcher(None, orig_lines, new_lines)
+        
+        for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+            if tag == 'replace':
+                self.orig_text.tag_add("diff_changed", f"{i1+1}.0", f"{i2+1}.0")
+                self.ai_text.tag_add("diff_changed", f"{j1+1}.0", f"{j2+1}.0")
+            elif tag == 'delete':
+                self.orig_text.tag_add("diff_removed", f"{i1+1}.0", f"{i2+1}.0")
+            elif tag == 'insert':
+                self.ai_text.tag_add("diff_added", f"{j1+1}.0", f"{j2+1}.0")
+        
+        self._bind_sync_scroll()
 
-        self.ai_text.config(state=tk.DISABLED)
+    def _bind_sync_scroll(self):
+        self.orig_editor.vsb.config(command=self._on_scroll_orig)
+        self.ai_editor.vsb.config(command=self._on_scroll_ai)
+        self.orig_text.bind("<MouseWheel>", self._on_wheel)
+        self.ai_text.bind("<MouseWheel>", self._on_wheel)
+
+    def _unbind_sync_scroll(self):
+        self.orig_editor.vsb.config(command=self.orig_text.yview)
+        self.ai_editor.vsb.config(command=self.ai_text.yview)
+        self.orig_text.unbind("<MouseWheel>")
+        self.ai_text.unbind("<MouseWheel>")
+
+    def _on_scroll_orig(self, *args):
+        self.orig_text.yview(*args)
+        self.ai_text.yview(*args)
+
+    def _on_scroll_ai(self, *args):
+        self.orig_text.yview(*args)
+        self.ai_text.yview(*args)
+        
+    def _on_wheel(self, event):
+        self.orig_text.yview_scroll(int(-1*(event.delta/120)), "units")
+        self.ai_text.yview_scroll(int(-1*(event.delta/120)), "units")
+        return "break"
 
     def find_text(self, event=None):
         """Search text in the active code editor"""
