@@ -505,6 +505,9 @@ class CodeChatWindow(tk.Toplevel):
         
         tk.Button(toolbar, text="🔍 Find", command=self.find_text, bg="#ecf0f1").pack(side=tk.LEFT, padx=5)
 
+        tk.Button(toolbar, text="💾 Save All", command=self.save_all_changes, bg="#27ae60", fg="white").pack(side=tk.LEFT, padx=(10, 5))
+        tk.Button(toolbar, text="❌ Reset All", command=self.reset_all_changes, bg="#c0392b", fg="white").pack(side=tk.LEFT, padx=5)
+
         self.status_label = tk.Label(toolbar, text="Ready", bg="#f0f0f0", fg="#7f8c8d")
         self.status_label.pack(side=tk.LEFT, padx=15)
 
