@@ -6,14 +6,13 @@ echo AI Chat Desktop - PyInstaller Build
 echo =========================================
 echo.
 
-REM Check if PyInstaller is installed
-pip show pyinstaller >nul 2>&1
-if errorlevel 1 (
-    echo Installing PyInstaller...
-    pip install pyinstaller
+REM Install/update dependencies from requirements.txt
+if exist requirements.txt (
+    echo Installing/updating required packages from requirements.txt...
+    pip install -r requirements.txt
+) else (
+    echo ⚠ Warning: requirements.txt not found. Build might fail if packages are missing.
 )
-
-echo ✓ PyInstaller found
 
 REM Check if icon exists
 if not exist "icon.ico" (
@@ -27,11 +26,9 @@ if not exist "icon.ico" (
 
 REM Clean old builds
 echo.
-echo Cleaning old build files...
-if exist build (
-    rmdir /s /q build
-    echo ✓ Removed build folder
-)
+echo Cleaning old distribution files...
+REM The 'build' folder is kept for caching to speed up subsequent builds.
+REM If you encounter build issues, you can manually delete the 'build' folder.
 if exist dist (
     rmdir /s /q dist
     echo ✓ Removed dist folder
