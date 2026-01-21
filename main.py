@@ -5,6 +5,7 @@ import json
 import os
 import re
 import sys
+import subprocess
 from pathlib import Path
 import google.generativeai as genai
 import requests
@@ -481,6 +482,7 @@ class CodeChatWindow(tk.Toplevel):
         
         tk.Button(btn_frame, text="Send (Ctrl+Enter)", command=self.send_message, bg="#2ecc71", fg="white", font=("Segoe UI", 9, "bold")).pack(fill=tk.X, pady=2)
         tk.Button(btn_frame, text="Apply Changes", command=self.apply_current_change, bg="#3498db", fg="white", font=("Segoe UI", 9)).pack(fill=tk.X, pady=2)
+        tk.Button(btn_frame, text="Format Code", command=self.format_code, bg="#9b59b6", fg="white", font=("Segoe UI", 9)).pack(fill=tk.X, pady=2)
 
     def open_folder(self):
         folder = filedialog.askdirectory()
@@ -542,6 +544,42 @@ class CodeChatWindow(tk.Toplevel):
             except Exception as e:
                 self.orig_text.delete("1.0", tk.END)
                 self.orig_text.insert(tk.END, f"Error reading file: {e}")
+
+    def format_code(self):
+        if not self.selected_file:
+            return
+        
+        content = self.orig_text.get("1.0", tk.END).strip()
+        if not content: return
+
+        ext = os.path.splitext(self.selected_file)[1].lower()
+        formatted = None
+        error = None
+
+        try:
+            if ext in ['.py', '.pyw']:
+                cmd = ['black', '-', '-q']
+                res = subprocess.run(cmd, input=content, capture_output=True, text=True, encoding='utf-8', creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
+                if res.returncode == 0: formatted = res.stdout
+                else: error = res.stderr
+            elif ext in ['.js', '.ts', '.jsx', '.tsx', '.json', '.html', '.css']:
+                cmd = ['npx.cmd' if os.name == 'nt' else 'npx', 'prettier', '--stdin-filepath', self.selected_file]
+                res = subprocess.run(cmd, input=content, capture_output=True, text=True, encoding='utf-8', creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
+                if res.returncode == 0: formatted = res.stdout
+                else: error = res.stderr
+            else:
+                messagebox.showinfo("Format", f"No formatter configured for {ext}")
+                return
+
+            if formatted:
+                self.orig_text.delete("1.0", tk.END)
+                self.orig_text.insert(tk.END, formatted)
+            elif error:
+                messagebox.showerror("Format Error", error)
+        except FileNotFoundError:
+            messagebox.showerror("Error", "Formatter tool not found. Ensure 'black' (Python) or 'prettier' (JS) is installed and in PATH.")
+        except Exception as e:
+            messagebox.showerror("Error", str(e))
 
     def send_message(self):
         prompt = self.chat_input.get("1.0", tk.END).strip()
