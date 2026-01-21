@@ -305,6 +305,93 @@ class SettingsWindow:
         self.status_label.config(text=" | ".join(results), fg="#2ecc71")
 
 
+class DevToolWindow(tk.Toplevel):
+    def __init__(self, parent, title: str, input_label_text: str, action_callback):
+        super().__init__(parent)
+        self.title(title)
+        self.geometry("900x700")
+        self.transient(parent)
+        self.grab_set()
+
+        try:
+            self.iconbitmap(default='icon.ico')
+        except Exception:
+            pass
+
+        self.action_callback = action_callback
+
+        main_frame = tk.Frame(self, padx=10, pady=10)
+        main_frame.pack(fill=tk.BOTH, expand=True)
+
+        paned_window = ttk.PanedWindow(main_frame, orient=tk.VERTICAL)
+        paned_window.pack(fill=tk.BOTH, expand=True)
+
+        # Input frame
+        input_container = tk.Frame(paned_window, padx=5, pady=5)
+        input_frame = tk.LabelFrame(input_container, text=input_label_text, padx=5, pady=5)
+        input_frame.pack(fill=tk.BOTH, expand=True)
+        self.input_text = scrolledtext.ScrolledText(input_frame, wrap=tk.WORD, height=10, font=("Segoe UI", 10))
+        self.input_text.pack(fill=tk.BOTH, expand=True)
+        paned_window.add(input_container)
+
+        # Output frame
+        output_container = tk.Frame(paned_window, padx=5, pady=5)
+        output_frame = tk.LabelFrame(output_container, text="Result", padx=5, pady=5)
+        output_frame.pack(fill=tk.BOTH, expand=True)
+        self.output_text = scrolledtext.ScrolledText(output_frame, wrap=tk.WORD, state=tk.DISABLED, font=("Segoe UI", 10))
+        self.output_text.pack(fill=tk.BOTH, expand=True)
+        paned_window.add(output_container)
+
+        # Button frame
+        button_frame = tk.Frame(main_frame, pady=5)
+        button_frame.pack(fill=tk.X)
+
+        self.run_btn = tk.Button(button_frame, text="Run", command=self.run_action, bg="#2ecc71", fg="white", font=("Segoe UI", 10, "bold"))
+        self.run_btn.pack(side=tk.LEFT, padx=(0, 10))
+        
+        self.copy_btn = tk.Button(button_frame, text="Copy Result", command=self.copy_result, bg="#3498db", fg="white", font=("Segoe UI", 10))
+        self.copy_btn.pack(side=tk.LEFT)
+
+        self.status_label = tk.Label(main_frame, text="Ready. Paste your content and click 'Run'.", anchor='w')
+        self.status_label.pack(fill=tk.X, pady=(5,0))
+
+    def run_action(self):
+        input_content = self.input_text.get("1.0", tk.END).strip()
+        if not input_content:
+            messagebox.showwarning("Input Missing", "Please provide input code/text.", parent=self)
+            return
+
+        self.status_label.config(text="Processing request with Gemini...")
+        self.run_btn.config(state=tk.DISABLED)
+        self.update()
+        
+        threading.Thread(target=self._execute_callback, args=(input_content,), daemon=True).start()
+
+    def _execute_callback(self, content):
+        try:
+            result = self.action_callback(content)
+            self.after(0, self.display_result, result)
+        except Exception as e:
+            self.after(0, self.display_result, f"An error occurred: {e}")
+
+    def display_result(self, result):
+        self.output_text.config(state=tk.NORMAL)
+        self.output_text.delete("1.0", tk.END)
+        self.output_text.insert(tk.END, result)
+        self.output_text.config(state=tk.DISABLED)
+        self.status_label.config(text="Done.")
+        self.run_btn.config(state=tk.NORMAL)
+
+    def copy_result(self):
+        result = self.output_text.get("1.0", tk.END).strip()
+        if result:
+            self.clipboard_clear()
+            self.clipboard_append(result)
+            self.status_label.config(text="Result copied to clipboard.")
+        else:
+            self.status_label.config(text="Nothing to copy.")
+
+
 class AIChatClient:
     def __init__(self, config_path: str):
         self.config_path = config_path
@@ -411,30 +498,70 @@ class ChatApp:
         self.create_menu()
         self.process_queue()
 
+    
     def create_menu(self):
+        """Create application menu with developer tools"""
         menubar = tk.Menu(self.root)
         self.root.config(menu=menubar)
 
+        # File menu
         file_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="File", menu=file_menu)
         file_menu.add_command(label="Clear Chat", command=self.clear_chat)
         file_menu.add_separator()
-        file_menu.add_command(label="Export Chat...", command=self.export_chat)
-        file_menu.add_separator()
-        file_menu.add_command(label="Exit", command=self.on_closing)
+        file_menu.add_command(label="Exit", command=self.root.quit)
 
-        settings_menu = tk.Menu(menubar, tearoff=0)
-        menubar.add_cascade(label="Settings", menu=settings_menu)
-        settings_menu.add_command(label="API Settings", command=self.open_settings)
-        settings_menu.add_command(label="Change Theme", command=self.change_theme)
+        # Developer Tools menu
+        tools_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="Developer Tools", menu=tools_menu)
 
+        tools_menu.add_command(label="Analyze Code...", command=self.tool_analyze_code)
+        tools_menu.add_command(label="Generate Documentation...", command=self.tool_generate_docs)
+        tools_menu.add_command(label="Debug Error...", command=self.tool_debug_error)
+        tools_menu.add_command(label="Generate Unit Tests...", command=self.tool_generate_tests)
+        tools_menu.add_separator()
+        tools_menu.add_command(label="SQL Optimizer...", command=self.tool_optimize_sql)
+        tools_menu.add_command(label="Design DB Schema...", command=self.tool_design_db_schema)
+        tools_menu.add_command(label="Regex Builder...", command=self.tool_build_regex)
+        tools_menu.add_separator()
+        tools_menu.add_command(label="Generate API Endpoint...", command=self.tool_generate_api_endpoint)
+        tools_menu.add_command(label="Security Check...", command=self.tool_check_security)
+        tools_menu.add_command(label="Performance Analysis...", command=self.tool_analyze_performance)
+        tools_menu.add_separator()
+        tools_menu.add_command(label="Recommend Packages...", command=self.tool_recommend_packages)
+        tools_menu.add_command(label="Explain Algorithm...", command=self.tool_explain_algorithm)
+        tools_menu.add_command(label="Refactor Code...", command=self.tool_refactor_code)
+        tools_menu.add_command(label="Git Helper...", command=self.tool_git_helper)
+        tools_menu.add_command(label="Generate Config...", command=self.tool_generate_config)
+
+        # Help menu
         help_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="Help", menu=help_menu)
-        help_menu.add_command(
-            label="Documentation",
-            command=lambda: webbrowser.open("https://github.com/heidi-dang/window-aichat")
-        )
         help_menu.add_command(label="About", command=self.show_about)
+
+    def open_dev_tool(self, title: str, input_label: str, action_callback):
+        """Generic function to open a developer tool window."""
+        DevToolWindow(self.root, title, input_label, action_callback)
+
+    def tool_analyze_code(self): self.open_dev_tool("Analyze Code", "Code to Analyze", self.analyze_code)
+    def tool_generate_docs(self): self.open_dev_tool("Generate Documentation", "Code to Document", self.generate_documentation)
+    def tool_debug_error(self): self.open_dev_tool("Debug Error", "Paste Error Message and Code Context", self.debug_error)
+    def tool_generate_tests(self): self.open_dev_tool("Generate Unit Tests", "Code to Test", self.generate_unit_tests)
+    def tool_optimize_sql(self): self.open_dev_tool("Optimize SQL", "SQL Query to Optimize", self.optimize_sql)
+    def tool_design_db_schema(self): self.open_dev_tool("Design DB Schema", "Requirements for DB Schema", self.design_database_schema)
+    def tool_build_regex(self): self.open_dev_tool("Build Regex", "Description of what to match", self.build_regex)
+    def tool_generate_api_endpoint(self): self.open_dev_tool("Generate API Endpoint", "Description of the API endpoint", self.generate_api_endpoint)
+    def tool_check_security(self): self.open_dev_tool("Check Security", "Code to check for vulnerabilities", self.check_security)
+    def tool_analyze_performance(self): self.open_dev_tool("Analyze Performance", "Code to analyze for performance", self.analyze_performance)
+    def tool_recommend_packages(self): self.open_dev_tool("Recommend Packages", "Describe the task you need a package for", self.recommend_packages)
+    def tool_explain_algorithm(self): self.open_dev_tool("Explain Algorithm", "Algorithm name or code to explain", self.explain_algorithm)
+    def tool_refactor_code(self): self.open_dev_tool("Refactor Code", "Code to refactor", self.refactor_code)
+    def tool_git_helper(self): self.open_dev_tool("Git Helper", "Describe your Git problem or task", self.git_helper)
+    def tool_generate_config(self): self.open_dev_tool("Generate Config", "Describe the configuration you need (e.g., 'nginx for a react app')", self.generate_config)
+
+    def show_about(self):
+        messagebox.showinfo("About", "AI Chat Desktop\nVersion 2.0\nDeveloper Tools Edition")
+
 
     def setup_ui(self):
         top_frame = tk.Frame(self.root, bg="#f0f0f0", pady=10)
@@ -738,6 +865,232 @@ Use the menu bar for additional options.
         if self.status_update_id:
             self.root.after_cancel(self.status_update_id)
         self.root.quit()
+
+    # ========== DEVELOPER TOOLS ==========
+
+    def analyze_code(self, code_snippet: str) -> str:
+        """Analyze code for bugs, performance, and security issues"""
+        prompt = f"""As an expert software engineer, analyze the following code snippet.
+Provide a report covering:
+1. Potential bugs
+2. Performance issues
+3. Security concerns
+4. Improvement suggestions
+5. Best practices violations
+
+Code:
+```
+{code_snippet}
+```
+
+Format as clear bullet points."""
+        return self.chat_client.ask_gemini(prompt)
+
+    def generate_documentation(self, code: str) -> str:
+        """Generate comprehensive documentation and docstrings"""
+        prompt = f"""Generate comprehensive documentation for the following code.
+Assume the language from the snippet, but default to Python if ambiguous.
+Include:
+1. Function/class docstrings (with type hints)
+2. Inline comments for complex logic
+3. A brief usage example
+4. Descriptions for parameters and return values
+
+Code:
+```
+{code}
+```"""
+        return self.chat_client.ask_gemini(prompt)
+
+    def optimize_sql(self, query: str) -> str:
+        """Build and optimize SQL queries"""
+        prompt = f"""Optimize the following SQL query. Assume PostgreSQL unless specified otherwise in the query.
+
+Query:
+```sql
+{query}
+```
+
+Provide:
+1. Optimized query
+2. Explanation of changes
+3. Indexing suggestions relevant to the query"""
+        return self.chat_client.ask_gemini(prompt)
+
+    def build_regex(self, description: str) -> str:
+        """Generate and explain regex patterns"""
+        prompt = f"""Create a regex pattern based on the following description.
+Include test strings if they are provided in the description.
+
+Description:
+{description}
+
+Provide:
+1. The regex pattern, compatible with Python's `re` module.
+2. A clear explanation of each part of the pattern.
+3. Example usage in Python."""
+        return self.chat_client.ask_gemini(prompt)
+
+    def generate_api_endpoint(self, description: str) -> str:
+        """Generate REST API endpoints with examples"""
+        prompt = f"""Generate a REST API endpoint. Assume Flask or FastAPI unless another framework is specified in the description.
+
+Description:
+{description}
+
+Include:
+1. Complete endpoint code
+2. Request/response examples
+3. Error handling
+4. Input validation"""
+        return self.chat_client.ask_gemini(prompt)
+
+    def design_database_schema(self, requirements: str) -> str:
+        """Design database schemas with relationships"""
+        prompt = f"""Design a database schema based on the following requirements. Assume PostgreSQL unless specified otherwise.
+
+Requirements:
+{requirements}
+
+Provide:
+1. Table structures with columns and types
+2. Primary/Foreign keys and relationships
+3. Indexes recommendations
+4. Sample `CREATE TABLE` statements"""
+        return self.chat_client.ask_gemini(prompt)
+
+    def debug_error(self, full_input: str) -> str:
+        """Debug errors and get solutions"""
+        prompt = f"""Help me debug the following error. The input may contain a traceback, error message, and relevant code.
+
+Input:
+```
+{full_input}
+```
+
+Provide:
+1. Root cause analysis
+2. Step-by-step fix
+3. Code with the fix applied
+4. Prevention tips"""
+        return self.chat_client.ask_gemini(prompt)
+
+    def generate_unit_tests(self, code: str) -> str:
+        """Generate unit tests with edge cases"""
+        prompt = f"""Generate unit tests for the following code. Assume pytest for Python, Jest for JS, etc., unless specified.
+
+Code:
+```
+{code}
+```
+
+Include:
+1. Test cases for normal scenarios
+2. Edge cases and boundary conditions
+3. Error/exception handling tests
+4. Mocks or stubs where appropriate"""
+        return self.chat_client.ask_gemini(prompt)
+
+    def analyze_performance(self, code: str) -> str:
+        """Analyze performance bottlenecks"""
+        prompt = f"""Analyze the performance of the following code:
+
+Code:
+```
+{code}
+```
+
+Provide:
+1. Time complexity analysis (Big O)
+2. Space complexity analysis (Big O)
+3. Identification of bottlenecks
+4. Concrete optimization strategies with refactored code examples"""
+        return self.chat_client.ask_gemini(prompt)
+
+    def check_security(self, code: str) -> str:
+        """Scan code for security vulnerabilities"""
+        prompt = f"""Check the following code for security vulnerabilities.
+
+Code:
+```
+{code}
+```
+
+Identify:
+1. A list of potential vulnerabilities (e.g., SQL Injection, XSS, etc.).
+2. For each vulnerability, explain the risk.
+3. Provide a corrected or more secure version of the code.
+4. Mention relevant OWASP Top 10 categories."""
+        return self.chat_client.ask_gemini(prompt)
+
+    def recommend_packages(self, requirement: str) -> str:
+        """Get package and dependency recommendations"""
+        prompt = f"""Recommend packages/libraries for the following requirement. Assume Python unless another language is specified.
+
+Requirement: {requirement}
+
+Provide:
+1. Top 3 package recommendations
+2. Pros/cons of each
+3. Installation commands
+4. A simple usage example for the top recommendation"""
+        return self.chat_client.ask_gemini(prompt)
+
+    def explain_algorithm(self, algorithm_input: str) -> str:
+        """Explain algorithms with complexity analysis"""
+        prompt = f"""Explain the algorithm provided either by name or as a code snippet.
+
+Algorithm/Code:
+{algorithm_input}
+
+Provide:
+1. Step-by-step explanation
+2. Time and Space complexity (Big O notation)
+3. Common use cases
+4. If code is provided, offer a Python implementation if it's not already."""
+        return self.chat_client.ask_gemini(prompt)
+
+    def refactor_code(self, code: str) -> str:
+        """Refactor code with design patterns"""
+        prompt = f"""Refactor the following code to improve its quality.
+
+Code:
+```
+{code}
+```
+
+Apply:
+1. Clean code practices (e.g., SOLID, DRY).
+2. Improve readability and maintainability.
+3. Apply relevant design patterns if applicable.
+
+Provide:
+- Refactored code
+- A brief explanation of the key changes and their benefits."""
+        return self.chat_client.ask_gemini(prompt)
+
+    def git_helper(self, task: str) -> str:
+        """Generate git commands and explain workflows"""
+        prompt = f"""I need help with Git. My task or problem is:
+{task}
+
+Provide:
+1. The necessary Git commands in sequence.
+2. A step-by-step explanation of what each command does.
+3. Any common pitfalls or things to watch out for."""
+        return self.chat_client.ask_gemini(prompt)
+
+    def generate_config(self, requirements: str) -> str:
+        """Generate configuration files"""
+        prompt = f"""Generate a configuration file based on these requirements:
+{requirements}
+
+Include:
+1. The complete configuration file content.
+2. Comments explaining important settings.
+3. Security best practices if applicable."""
+        return self.chat_client.ask_gemini(prompt)
+
 
 
 def main():

@@ -28,6 +28,16 @@ class GitHubHandler:
         self._save_to_cache(cache_file, context)
         return context
 
+    def _validate_github_url(self, url: str) -> bool:
+        """Validate GitHub URL format"""
+        try:
+            if not url or 'github.com' not in url:
+                return False
+            path = url.split('github.com/')[-1].replace('.git', '').strip('/')
+            return len([p for p in path.split('/') if p]) >= 2
+        except Exception:
+            return False
+
     def _extract_repo_name(self, url: str) -> str:
         """Extract repo name from GitHub URL"""
         url = url.rstrip('/')

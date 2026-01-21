@@ -83,4 +83,3 @@ echo   1. Double-click dist\AIChatDesktop.exe
 echo   2. Or run: dist\AIChatDesktop.exe
 echo.
 pause
-    
