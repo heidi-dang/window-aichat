@@ -7,6 +7,7 @@ import shutil
 import zipfile
 from typing import Optional
 from unittest.mock import MagicMock
+from datetime import datetime, timedelta
 
 import psutil
 import httpx
@@ -75,7 +76,7 @@ class User(Base):
     email = Column(String, unique=True, index=True)
     provider = Column(String)  # google, github, apple
     provider_id = Column(String, index=True)
-    created_at = Column(DateTime, default=datetime.now)
+    created_at = Column(DateTime, default=datetime.now())
 
     chats = relationship("ChatMessage", back_populates="user")
     files = relationship("FileRecord", back_populates="user")
@@ -86,8 +87,8 @@ class ChatMessage(Base):
     user_id = Column(Integer, ForeignKey("users.id"))
     sender = Column(String)
     text = Column(Text)
-    timestamp = Column(DateTime, default=datetime.now)
-    
+    timestamp = Column(DateTime, default=datetime.now())
+
     user = relationship("User", back_populates="chats")
 
 class FileRecord(Base):
@@ -96,7 +97,7 @@ class FileRecord(Base):
     user_id = Column(Integer, ForeignKey("users.id"))
     filename = Column(String)
     file_path = Column(String)
-    uploaded_at = Column(DateTime, default=datetime.now)
+    uploaded_at = Column(DateTime, default=datetime.now())
 
     user = relationship("User", back_populates="files")
 
@@ -150,7 +151,7 @@ class ChatRequest(BaseModel):
     model: str = "both"
     repo_url: Optional[str] = ""
     gemini_key: Optional[str] = ""
-    deepseek_key: Optional[str] = ""
+    deepseek_api_key: Optional[str] = ""
     github_token: Optional[str] = ""
 
 
@@ -196,7 +197,7 @@ def get_ai_client(req: ChatRequest) -> AIChatClient:
     # Inject keys from request
     client.config = {
         "gemini_api_key": req.gemini_key,
-        "deepseek_api_key": req.deepseek_key,
+        "deepseek_api_key": req.deepseek_api_key,
         "gemini_model": "gemini-2.0-flash",  # Default
     }
 
@@ -238,6 +239,7 @@ def create_access_token(data: dict):
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
 
+
 async def get_current_user(request: Request, db: Session = Depends(get_db)):
     """
     Extracts user from JWT in Authorization header.
@@ -246,7 +248,7 @@ async def get_current_user(request: Request, db: Session = Depends(get_db)):
     auth_header = request.headers.get("Authorization")
     if not auth_header:
         return None
-    
+
     try:
         token = auth_header.split(" ")[1]
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
@@ -255,7 +257,7 @@ async def get_current_user(request: Request, db: Session = Depends(get_db)):
             return None
     except JWTError:
         return None
-        
+
     user = db.query(User).filter(User.email == email).first()
     return user
 
@@ -265,12 +267,13 @@ async def get_current_user(request: Request, db: Session = Depends(get_db)):
 async def health_check():
     return {"status": "ok", "service": "AI Chat Backend"}
 
+
 # --- Auth Endpoints ---
 @app.get("/auth/login/{provider}")
 async def login(provider: str):
     if provider not in OAUTH_CONFIG:
         raise HTTPException(status_code=400, detail="Invalid provider")
-    
+
     config = OAUTH_CONFIG[provider]
     if not config["client_id"]:
         return {"error": f"{provider} Client ID not configured in environment variables"}
@@ -280,50 +283,57 @@ async def login(provider: str):
         "response_type": "code",
         "scope": config["scope"],
         "redirect_uri": f"http://localhost:8000/auth/callback/{provider}",
-        "access_type": "offline"
+        "access_type": "offline",
     }
-    
+
     # Construct URL
     import urllib.parse
+
     url = f"{config['auth_url']}?{urllib.parse.urlencode(params)}"
     return {"url": url}
+
 
 @app.get("/auth/callback/{provider}")
 async def auth_callback(provider: str, code: str, db: Session = Depends(get_db)):
     if provider not in OAUTH_CONFIG:
         raise HTTPException(status_code=400, detail="Invalid provider")
-        
+
     config = OAUTH_CONFIG[provider]
-    
+
     # Exchange code for token
     async with httpx.AsyncClient() as client:
-        token_res = await client.post(config["token_url"], data={
-            "client_id": config["client_id"],
-            "client_secret": config["client_secret"],
-            "code": code,
-            "grant_type": "authorization_code",
-            "redirect_uri": f"http://localhost:8000/auth/callback/{provider}"
-        }, headers={"Accept": "application/json"})
-        
+        token_res = await client.post(
+            config["token_url"],
+            data={
+                "client_id": config["client_id"],
+                "client_secret": config["client_secret"],
+                "code": code,
+                "grant_type": "authorization_code",
+                "redirect_uri": f"http://localhost:8000/auth/callback/{provider}",
+            },
+            headers={"Accept": "application/json"},
+        )
+
         token_data = token_res.json()
         access_token = token_data.get("access_token")
-        
+
         if not access_token:
             raise HTTPException(status_code=400, detail="Failed to retrieve access token")
 
         # Get User Info
-        user_info_res = await client.get(config["user_info_url"], headers={
-            "Authorization": f"Bearer {access_token}"
-        })
+        user_info_res = await client.get(
+            config["user_info_url"],
+            headers={"Authorization": f"Bearer {access_token}"},
+        )
         user_data = user_info_res.json()
-        
+
         # Normalize email/id based on provider
         email = user_data.get("email")
         provider_id = str(user_data.get("id") or user_data.get("sub"))
-        
+
         if not email:
-             # Fallback for GitHub if email is private
-             email = f"{provider_id}@{provider}.placeholder.com"
+            # Fallback for GitHub if email is private
+            email = f"{provider_id}@{provider}.placeholder.com"
 
         # Save/Update User
         user = db.query(User).filter(User.email == email).first()
@@ -332,13 +342,14 @@ async def auth_callback(provider: str, code: str, db: Session = Depends(get_db))
             db.add(user)
             db.commit()
             db.refresh(user)
-            
+
         # Create JWT
         jwt_token = create_access_token(data={"sub": user.email})
-        
+
         # Redirect to frontend with token
         frontend_url = os.getenv("FRONTEND_URL", "http://localhost:5173")
         return RedirectResponse(url=f"{frontend_url}/login?token={jwt_token}")
+
 
 @app.get("/api/processes")
 async def list_processes():
@@ -390,14 +401,13 @@ async def chat_endpoint(req: ChatRequest, db: Session = Depends(get_db), current
             # Save User Message
             user_msg = ChatMessage(user_id=current_user.id, sender="You", text=req.message)
             db.add(user_msg)
-            
+
             # Save AI Response
             ai_msg = ChatMessage(user_id=current_user.id, sender=sender, text=response_text)
             db.add(ai_msg)
-            
+
             db.commit()
 
-        from datetime import datetime
         return {
             "sender": sender,
             "text": response_text,
@@ -411,7 +421,7 @@ async def chat_endpoint(req: ChatRequest, db: Session = Depends(get_db), current
 @app.get("/api/fs/list")
 async def list_files(current_user: User = Depends(get_current_user)):
     files = []
-    
+
     # Determine user workspace
     target_dir = WORKSPACE_DIR
     if current_user:
@@ -447,9 +457,9 @@ async def read_file(req: FileReadRequest, current_user: User = Depends(get_curre
     base_dir = WORKSPACE_DIR
     if current_user:
         base_dir = os.path.join(WORKSPACE_DIR, str(current_user.id))
-        
+
     safe_path = os.path.normpath(os.path.join(base_dir, req.path))
-    
+
     if not safe_path.startswith(base_dir):
         raise HTTPException(status_code=403, detail="Access denied")
 
@@ -485,7 +495,7 @@ async def write_file(req: FileWriteRequest, current_user: User = Depends(get_cur
 
 
 @app.post("/api/tool")
-async def run_tool(req: ToolRequest):
+async def run_tool(req: ToolRequest, current_user: User = Depends(get_current_user)):
     # Create a temporary client using the key provided in request (or default)
     client = get_ai_client(ChatRequest(message="", gemini_key=req.gemini_key))
     prompt = get_tool_prompt(req.tool, req.code)
@@ -531,7 +541,7 @@ async def upload_file(file: UploadFile = File(...), db: Session = Depends(get_db
         if current_user:
             base_dir = os.path.join(WORKSPACE_DIR, str(current_user.id))
             os.makedirs(base_dir, exist_ok=True)
-            
+
         file_path = os.path.join(base_dir, file.filename)
 
         # Save uploaded file
@@ -546,7 +556,7 @@ async def upload_file(file: UploadFile = File(...), db: Session = Depends(get_db
             with zipfile.ZipFile(file_path, "r") as zip_ref:
                 zip_ref.extractall(extract_dir)
             # os.remove(file_path)  # Optional: Keep zip or remove
-            
+
         # Save metadata to DB if user exists
         if current_user:
             db_file = FileRecord(user_id=current_user.id, filename=file.filename, file_path=file_path)
