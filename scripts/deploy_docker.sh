@@ -33,12 +33,42 @@ apt-get install -y \
   git \
   curl \
   ufw \
-  docker.io \
-  docker-compose-plugin
+  ca-certificates \
+  gnupg \
+  lsb-release
+
+# --- Install Docker from Official Repository ---
+echo -e "${GREEN}Installing Docker from official repository...${NC}"
+
+# Remove old versions if any
+apt-get remove -y docker docker-engine docker.io containerd runc 2>/dev/null || true
+
+# Add Docker's official GPG key
+install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+chmod a+r /etc/apt/keyrings/docker.gpg
+
+# Set up the repository
+echo \
+  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
+  $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
+  tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+# Install Docker Engine, CLI, and Docker Compose plugin
+apt-get update -y
+apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 
 # Start and enable Docker
-systemctl start docker
 systemctl enable docker
+systemctl start docker
+
+# Verify Docker installation
+if docker --version && docker compose version; then
+  echo -e "${GREEN}✅ Docker and Docker Compose installed successfully${NC}"
+else
+  echo -e "${RED}❌ Docker installation failed${NC}"
+  exit 1
+fi
 
 # Add current user to docker group (if not root)
 if [ -n "$SUDO_USER" ]; then
