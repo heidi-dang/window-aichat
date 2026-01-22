@@ -9,6 +9,10 @@ from typing import Optional
 from unittest.mock import MagicMock
 
 import psutil
+import httpx
+from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, ForeignKey
+from sqlalchemy.orm import sessionmaker, Session, relationship, declarative_base
+from jose import jwt, JWTError
 from fastapi import (
     FastAPI,
     HTTPException,
@@ -17,6 +21,8 @@ from fastapi import (
     WebSocketDisconnect,
     UploadFile,
     File,
+    Depends,
+    Request,
 )
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -31,6 +37,10 @@ try:
 except ImportError as e:
     print(f"Error importing existing logic: {e}")
     sys.exit(1)
+
+# Load environment variables from .env file
+from dotenv import load_dotenv
+load_dotenv()
 
 # --- 3. App Configuration ---
 app = FastAPI(title="AI Chat Backend")
@@ -51,6 +61,87 @@ os.makedirs(CACHE_DIR, exist_ok=True)
 WORKSPACE_DIR = os.path.join(BASE_DIR, "workspace")
 os.makedirs(WORKSPACE_DIR, exist_ok=True)
 
+# --- 3.1 Database Setup (SQLite) ---
+SQLALCHEMY_DATABASE_URL = "sqlite:///./aichat.db"
+engine = create_engine(SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False})
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+Base = declarative_base()
+
+# --- 3.2 Database Models ---
+class User(Base):
+    __tablename__ = "users"
+    id = Column(Integer, primary_key=True, index=True)
+    email = Column(String, unique=True, index=True)
+    provider = Column(String)  # google, github, apple
+    provider_id = Column(String, index=True)
+    created_at = Column(DateTime, default=datetime.now)
+
+    chats = relationship("ChatMessage", back_populates="user")
+    files = relationship("FileRecord", back_populates="user")
+
+class ChatMessage(Base):
+    __tablename__ = "chat_messages"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"))
+    sender = Column(String)
+    text = Column(Text)
+    timestamp = Column(DateTime, default=datetime.now)
+    
+    user = relationship("User", back_populates="chats")
+
+class FileRecord(Base):
+    __tablename__ = "files"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"))
+    filename = Column(String)
+    file_path = Column(String)
+    uploaded_at = Column(DateTime, default=datetime.now)
+
+    user = relationship("User", back_populates="files")
+
+# Create Tables
+Base.metadata.create_all(bind=engine)
+
+# --- 3.3 Auth Configuration ---
+SECRET_KEY = os.getenv("JWT_SECRET", "your-secret-key-change-in-production")
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 7 days
+
+# OAuth Configs (Load from env)
+OAUTH_CONFIG = {
+    "google": {
+        "client_id": os.getenv("GOOGLE_CLIENT_ID", ""),
+        "client_secret": os.getenv("GOOGLE_CLIENT_SECRET", ""),
+        "auth_url": "https://accounts.google.com/o/oauth2/v2/auth",
+        "token_url": "https://oauth2.googleapis.com/token",
+        "user_info_url": "https://www.googleapis.com/oauth2/v3/userinfo",
+        "scope": "openid email profile"
+    },
+    "github": {
+        "client_id": os.getenv("GITHUB_CLIENT_ID", ""),
+        "client_secret": os.getenv("GITHUB_CLIENT_SECRET", ""),
+        "auth_url": "https://github.com/login/oauth/authorize",
+        "token_url": "https://github.com/login/oauth/access_token",
+        "user_info_url": "https://api.github.com/user",
+        "scope": "user:email"
+    },
+    "apple": {
+        # Apple is more complex, usually requires specific library for Sign In with Apple
+        # This is a placeholder for the OIDC flow
+        "client_id": os.getenv("APPLE_CLIENT_ID", ""),
+        "client_secret": os.getenv("APPLE_CLIENT_SECRET", ""),
+        "auth_url": "https://appleid.apple.com/auth/authorize",
+        "token_url": "https://appleid.apple.com/auth/token",
+        "scope": "name email"
+    }
+}
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
 
 # --- 4. Data Models ---
 class ChatRequest(BaseModel):
@@ -85,6 +176,10 @@ class ToolRequest(BaseModel):
 
 class CloneRequest(BaseModel):
     repo_url: str
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str
 
 
 # --- 5. Helper Functions ---
@@ -135,11 +230,115 @@ def get_tool_prompt(tool: str, code: str) -> str:
     return prompts.get(tool, f"Analyze this code:\n\n{code}")
 
 
+def create_access_token(data: dict):
+    to_encode = data.copy()
+    expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    to_encode.update({"exp": expire})
+    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    return encoded_jwt
+
+async def get_current_user(request: Request, db: Session = Depends(get_db)):
+    """
+    Extracts user from JWT in Authorization header.
+    Returns None if no token or invalid, allowing guest access if desired.
+    """
+    auth_header = request.headers.get("Authorization")
+    if not auth_header:
+        return None
+    
+    try:
+        token = auth_header.split(" ")[1]
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        email: str = payload.get("sub")
+        if email is None:
+            return None
+    except JWTError:
+        return None
+        
+    user = db.query(User).filter(User.email == email).first()
+    return user
+
+
 # --- 6. API Endpoints ---
 @app.get("/")
 async def health_check():
     return {"status": "ok", "service": "AI Chat Backend"}
 
+# --- Auth Endpoints ---
+@app.get("/auth/login/{provider}")
+async def login(provider: str):
+    if provider not in OAUTH_CONFIG:
+        raise HTTPException(status_code=400, detail="Invalid provider")
+    
+    config = OAUTH_CONFIG[provider]
+    if not config["client_id"]:
+        return {"error": f"{provider} Client ID not configured in environment variables"}
+
+    params = {
+        "client_id": config["client_id"],
+        "response_type": "code",
+        "scope": config["scope"],
+        "redirect_uri": f"http://localhost:8000/auth/callback/{provider}",
+        "access_type": "offline"
+    }
+    
+    # Construct URL
+    import urllib.parse
+    url = f"{config['auth_url']}?{urllib.parse.urlencode(params)}"
+    return {"url": url}
+
+@app.get("/auth/callback/{provider}")
+async def auth_callback(provider: str, code: str, db: Session = Depends(get_db)):
+    if provider not in OAUTH_CONFIG:
+        raise HTTPException(status_code=400, detail="Invalid provider")
+        
+    config = OAUTH_CONFIG[provider]
+    
+    # Exchange code for token
+    async with httpx.AsyncClient() as client:
+        token_res = await client.post(config["token_url"], data={
+            "client_id": config["client_id"],
+            "client_secret": config["client_secret"],
+            "code": code,
+            "grant_type": "authorization_code",
+            "redirect_uri": f"http://localhost:8000/auth/callback/{provider}"
+        }, headers={"Accept": "application/json"})
+        
+        token_data = token_res.json()
+        access_token = token_data.get("access_token")
+        
+        if not access_token:
+            raise HTTPException(status_code=400, detail="Failed to retrieve access token")
+
+        # Get User Info
+        user_info_res = await client.get(config["user_info_url"], headers={
+            "Authorization": f"Bearer {access_token}"
+        })
+        user_data = user_info_res.json()
+        
+        # Normalize email/id based on provider
+        email = user_data.get("email")
+        provider_id = str(user_data.get("id") or user_data.get("sub"))
+        
+        if not email:
+             # Fallback for GitHub if email is private
+             email = f"{provider_id}@{provider}.placeholder.com"
+
+        # Save/Update User
+        user = db.query(User).filter(User.email == email).first()
+        if not user:
+            user = User(email=email, provider=provider, provider_id=provider_id)
+            db.add(user)
+            db.commit()
+            db.refresh(user)
+            
+        # Create JWT
+        jwt_token = create_access_token(data={"sub": user.email})
+        
+        # In a real app, redirect to frontend with token. 
+        # Here we return it JSON for simplicity or redirect to a frontend route that handles the token.
+        # return RedirectResponse(url=f"http://localhost:5173/login?token={jwt_token}")
+        return {"access_token": jwt_token, "token_type": "bearer", "user": email}
 
 @app.get("/api/processes")
 async def list_processes():
@@ -155,7 +354,7 @@ async def list_processes():
 
 
 @app.post("/api/chat")
-async def chat_endpoint(req: ChatRequest):
+async def chat_endpoint(req: ChatRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     try:
         # 1. Fetch Context (if repo provided)
         context = get_repo_context(req.repo_url, req.github_token)
@@ -186,8 +385,19 @@ async def chat_endpoint(req: ChatRequest):
             response_text = f"**Gemini:**\n{responses['gemini']}\n\n---\n\n**DeepSeek:**\n{responses['deepseek']}"
             sender = "Gemini & DeepSeek"
 
-        from datetime import datetime
+        # 5. Save to Database if user is logged in
+        if current_user:
+            # Save User Message
+            user_msg = ChatMessage(user_id=current_user.id, sender="You", text=req.message)
+            db.add(user_msg)
+            
+            # Save AI Response
+            ai_msg = ChatMessage(user_id=current_user.id, sender=sender, text=response_text)
+            db.add(ai_msg)
+            
+            db.commit()
 
+        from datetime import datetime
         return {
             "sender": sender,
             "text": response_text,
@@ -199,10 +409,17 @@ async def chat_endpoint(req: ChatRequest):
 
 
 @app.get("/api/fs/list")
-async def list_files():
+async def list_files(current_user: User = Depends(get_current_user)):
     files = []
-    for root, dirs, filenames in os.walk(WORKSPACE_DIR):
-        rel_path = os.path.relpath(root, WORKSPACE_DIR)
+    
+    # Determine user workspace
+    target_dir = WORKSPACE_DIR
+    if current_user:
+        target_dir = os.path.join(WORKSPACE_DIR, str(current_user.id))
+        os.makedirs(target_dir, exist_ok=True)
+
+    for root, dirs, filenames in os.walk(target_dir):
+        rel_path = os.path.relpath(root, target_dir)
         if rel_path == ".":
             rel_path = ""
 
@@ -226,9 +443,14 @@ async def list_files():
 
 
 @app.post("/api/fs/read")
-async def read_file(req: FileReadRequest):
-    safe_path = os.path.normpath(os.path.join(WORKSPACE_DIR, req.path))
-    if not safe_path.startswith(WORKSPACE_DIR):
+async def read_file(req: FileReadRequest, current_user: User = Depends(get_current_user)):
+    base_dir = WORKSPACE_DIR
+    if current_user:
+        base_dir = os.path.join(WORKSPACE_DIR, str(current_user.id))
+        
+    safe_path = os.path.normpath(os.path.join(base_dir, req.path))
+    
+    if not safe_path.startswith(base_dir):
         raise HTTPException(status_code=403, detail="Access denied")
 
     if not os.path.exists(safe_path):
@@ -243,9 +465,14 @@ async def read_file(req: FileReadRequest):
 
 
 @app.post("/api/fs/write")
-async def write_file(req: FileWriteRequest):
-    safe_path = os.path.normpath(os.path.join(WORKSPACE_DIR, req.path))
-    if not safe_path.startswith(WORKSPACE_DIR):
+async def write_file(req: FileWriteRequest, current_user: User = Depends(get_current_user)):
+    base_dir = WORKSPACE_DIR
+    if current_user:
+        base_dir = os.path.join(WORKSPACE_DIR, str(current_user.id))
+        os.makedirs(base_dir, exist_ok=True)
+
+    safe_path = os.path.normpath(os.path.join(base_dir, req.path))
+    if not safe_path.startswith(base_dir):
         raise HTTPException(status_code=403, detail="Access denied")
 
     try:
@@ -267,11 +494,16 @@ async def run_tool(req: ToolRequest):
 
 
 @app.post("/api/git/clone")
-async def clone_repo(req: CloneRequest):
+async def clone_repo(req: CloneRequest, current_user: User = Depends(get_current_user)):
     try:
+        base_dir = WORKSPACE_DIR
+        if current_user:
+            base_dir = os.path.join(WORKSPACE_DIR, str(current_user.id))
+            os.makedirs(base_dir, exist_ok=True)
+
         # Extract repo name
         repo_name = req.repo_url.split("/")[-1].replace(".git", "")
-        target_dir = os.path.join(WORKSPACE_DIR, repo_name)
+        target_dir = os.path.join(base_dir, repo_name)
 
         if os.path.exists(target_dir):
             return {
@@ -293,9 +525,14 @@ async def clone_repo(req: CloneRequest):
 
 
 @app.post("/api/fs/upload")
-async def upload_file(file: UploadFile = File(...)):
+async def upload_file(file: UploadFile = File(...), db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     try:
-        file_path = os.path.join(WORKSPACE_DIR, file.filename)
+        base_dir = WORKSPACE_DIR
+        if current_user:
+            base_dir = os.path.join(WORKSPACE_DIR, str(current_user.id))
+            os.makedirs(base_dir, exist_ok=True)
+            
+        file_path = os.path.join(base_dir, file.filename)
 
         # Save uploaded file
         with open(file_path, "wb") as buffer:
@@ -304,11 +541,18 @@ async def upload_file(file: UploadFile = File(...)):
         # If zip, extract it
         if file.filename.endswith(".zip"):
             extract_dir = os.path.join(
-                WORKSPACE_DIR, os.path.splitext(file.filename)[0]
+                base_dir, os.path.splitext(file.filename)[0]
             )
             with zipfile.ZipFile(file_path, "r") as zip_ref:
                 zip_ref.extractall(extract_dir)
-            os.remove(file_path)  # Remove zip after extraction
+            # os.remove(file_path)  # Optional: Keep zip or remove
+            
+        # Save metadata to DB if user exists
+        if current_user:
+            db_file = FileRecord(user_id=current_user.id, filename=file.filename, file_path=file_path)
+            db.add(db_file)
+            db.commit()
+
             return {
                 "status": "ok",
                 "message": f"Uploaded and extracted '{file.filename}'.",

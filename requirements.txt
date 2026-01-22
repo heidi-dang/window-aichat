@@ -9,4 +9,7 @@ python-multipart
 aiofiles
 pyinstaller
 psutil
-pygments
+sqlalchemy
+python-jose[cryptography]
+httpx
+python-dotenv
