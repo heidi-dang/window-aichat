@@ -653,7 +653,7 @@ If you are just chatting, just provide text.
             response = self.chat_client.ask_gemini(prompt)
             self.after(0, self.handle_ai_response, response)
         except Exception as e:
-            self.after(0, lambda: messagebox.showerror("Error", str(e)))
+            self.after(0, lambda e=e: messagebox.showerror("Error", str(e)))
 
     def handle_ai_response(self, response):
         self.thinking_start_time = 0 # Stop timer
