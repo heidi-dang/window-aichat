@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   backend:
     image: ghcr.io/heidi-dang/window-aichat/backend:latest
