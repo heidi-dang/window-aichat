@@ -78,7 +78,7 @@ function App() {
   }, [messages]);
 
   useEffect(() => {
-    fetchFiles();
+    void fetchFiles();
   }, []);
 
   const fetchFiles = async () => {
@@ -129,7 +129,7 @@ function App() {
   };
 
   const saveFile = async () => {
-    if (!activeFile) return;
+    if (!activeFile) { return; }
     const content = editorRef.current ? editorRef.current.getValue() : fileContent;
     
     try {
@@ -155,13 +155,13 @@ function App() {
   };
 
   const runTool = async (tool: string) => {
-    if (!editorRef.current) return;
+    if (!editorRef.current) { return; }
     
     const model = editorRef.current.getModel();
     const selectionRange = editorRef.current.getSelection() || null;
     const selection = model && selectionRange ? model.getValueInRange(selectionRange) : "";
     const code = selection || editorRef.current.getValue();
-
+    
     if (!code.trim()) {
       alert("Please select code or open a file first.");
       return;
@@ -222,7 +222,7 @@ function App() {
   const handleEditorDidMount = (editor: MonacoEditor.editor.IStandaloneCodeEditor, monaco: typeof MonacoEditor) => {
     editorRef.current = editor;
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
-      saveFile();
+      void saveFile();
     });
   };
 
@@ -235,7 +235,7 @@ function App() {
   };
 
   const sendMessage = async () => {
-    if (!input.trim()) return;
+    if (!input.trim()) { return; }
 
     const userMsg: Message = {
       sender: 'You',
@@ -549,11 +549,11 @@ function App() {
         <div className="editor-header">
           <span className="file-name">{activeFile || 'No file selected'}</span>
           <div className="editor-actions">
-            <button onClick={() => runTool('analyze')} title="Analyze Code">🔍 Analyze</button>
-            <button onClick={() => runTool('explain')} title="Explain Code">📖 Explain</button>
-            <button onClick={() => runTool('refactor')} title="Refactor Code">🛠 Refactor</button>
-            <button onClick={() => runTool('docs')} title="Generate Docs">📝 Docs</button>
-            <button className="primary" onClick={saveFile} disabled={!activeFile}>💾 Save</button>
+            <button onClick={() => void runTool('analyze')} title="Analyze Code">🔍 Analyze</button>
+            <button onClick={() => void runTool('explain')} title="Explain Code">📖 Explain</button>
+            <button onClick={() => void runTool('refactor')} title="Refactor Code">🛠 Refactor</button>
+            <button onClick={() => void runTool('docs')} title="Generate Docs">📝 Docs</button>
+            <button className="primary" onClick={() => void saveFile()} disabled={!activeFile}>💾 Save</button>
           </div>
         </div>
         <div className="monaco-wrapper">
@@ -608,12 +608,12 @@ function App() {
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
-                sendMessage();
+                void sendMessage();
               }
             }}
             placeholder="Ask AI..."
           />
-          <button onClick={sendMessage} disabled={isLoading}>
+          <button onClick={() => void sendMessage()} disabled={isLoading}>
             ➤
           </button>
         </div>

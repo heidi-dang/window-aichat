@@ -11,7 +11,6 @@ from datetime import datetime, timedelta
 
 import psutil
 import httpx
-from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, ForeignKey
 from sqlalchemy import (
     create_engine,
     Column,
@@ -315,13 +314,6 @@ async def auth_callback(provider: str, code: str, db: Session = Depends(get_db))
 
     # Exchange code for token
     async with httpx.AsyncClient() as client:
-        token_res = await client.post(config["token_url"], data={
-            "client_id": config["client_id"],
-            "client_secret": config["client_secret"],
-            "code": code,
-            "grant_type": "authorization_code",
-            "redirect_uri": f"http://localhost:8000/auth/callback/{provider}"
-        }, headers={"Accept": "application/json"})
         token_res = await client.post(
             config["token_url"],
             data={
@@ -351,8 +343,6 @@ async def auth_callback(provider: str, code: str, db: Session = Depends(get_db))
         provider_id = str(user_data.get("id") or user_data.get("sub"))
 
         if not email:
-             # Fallback for GitHub if email is private
-             email = f"{provider_id}@{provider}.placeholder.com"
             # Fallback for GitHub if email is private
             email = f"{provider_id}@{provider}.placeholder.com"
 
@@ -385,7 +375,6 @@ async def list_processes():
 
 
 @app.post("/api/chat")
-async def chat_endpoint(req: ChatRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
 async def chat_endpoint(
     req: ChatRequest,
     db: Session = Depends(get_db),
@@ -418,7 +407,6 @@ async def chat_endpoint(
             # or you could modify the frontend to handle a JSON object with both.
             # Here we combine them textually.
             responses = client.ask_both(full_prompt)
-            response_text = f"**Gemini:**\n{responses['gemini']}\n\n---\n\n**DeepSeek:**\n{responses['deepseek']}"
             response_text = (
                 f"**Gemini:**\n{responses['gemini']}\n\n---\n\n**DeepSeek:**\n{responses['deepseek']}"
             )
@@ -431,7 +419,6 @@ async def chat_endpoint(
             db.add(user_msg)
 
             # Save AI Response
-            ai_msg = ChatMessage(user_id=current_user.id, sender=sender, text=response_text)
             ai_msg = ChatMessage(
                 user_id=current_user.id, sender=sender, text=response_text
             )
@@ -484,7 +471,6 @@ async def list_files(current_user: User = Depends(get_current_user)):
 
 
 @app.post("/api/fs/read")
-async def read_file(req: FileReadRequest, current_user: User = Depends(get_current_user)):
 async def read_file(
     req: FileReadRequest, current_user: User = Depends(get_current_user)
 ):
@@ -509,7 +495,6 @@ async def read_file(
 
 
 @app.post("/api/fs/write")
-async def write_file(req: FileWriteRequest, current_user: User = Depends(get_current_user)):
 async def write_file(
     req: FileWriteRequest, current_user: User = Depends(get_current_user)
 ):
@@ -541,7 +526,6 @@ async def run_tool(req: ToolRequest, current_user: User = Depends(get_current_us
 
 
 @app.post("/api/git/clone")
-async def clone_repo(req: CloneRequest, current_user: User = Depends(get_current_user)):
 async def clone_repo(
     req: CloneRequest, current_user: User = Depends(get_current_user)
 ):
@@ -575,7 +559,6 @@ async def clone_repo(
 
 
 @app.post("/api/fs/upload")
-async def upload_file(file: UploadFile = File(...), db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
 async def upload_file(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
@@ -620,7 +603,6 @@ async def upload_file(
 
 # --- Terminal Endpoint (WebSocket) ---
 @app.websocket("/ws/terminal")
-async def terminal_websocket(websocket: WebSocket, token: str = Query(...), db: Session = Depends(get_db)):
 async def terminal_websocket(
     websocket: WebSocket,
     token: str = Query(...),
