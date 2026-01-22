@@ -3,11 +3,13 @@ import sys
 import logging
 import subprocess
 import asyncio
+import shutil
+import zipfile
 from typing import Optional
 from unittest.mock import MagicMock
 
 import psutil
-from fastapi import FastAPI, HTTPException, Body, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Body, WebSocket, WebSocketDisconnect, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -66,6 +68,9 @@ class ToolRequest(BaseModel):
     tool: str
     code: str
     gemini_key: Optional[str] = ""
+
+class CloneRequest(BaseModel):
+    repo_url: str
 
 # --- 5. Helper Functions ---
 def get_ai_client(req: ChatRequest) -> AIChatClient:
@@ -175,7 +180,7 @@ async def list_files():
     for root, dirs, filenames in os.walk(WORKSPACE_DIR):
         rel_path = os.path.relpath(root, WORKSPACE_DIR)
         if rel_path == ".": rel_path = ""
-        
+
         for d in dirs:
             files.append({
                 "name": d,
@@ -227,6 +232,51 @@ async def run_tool(req: ToolRequest):
     prompt = get_tool_prompt(req.tool, req.code)
     result = client.ask_gemini(prompt)
     return {"result": result}
+
+@app.post("/api/git/clone")
+async def clone_repo(req: CloneRequest):
+    try:
+        # Extract repo name
+        repo_name = req.repo_url.split("/")[-1].replace(".git", "")
+        target_dir = os.path.join(WORKSPACE_DIR, repo_name)
+
+        if os.path.exists(target_dir):
+            return {"status": "exists", "message": f"Repository '{repo_name}' already exists in workspace."}
+
+        # Run git clone
+        process = subprocess.run(
+            ["git", "clone", req.repo_url, target_dir],
+            capture_output=True,
+            text=True
+        )
+
+        if process.returncode != 0:
+            raise Exception(f"Git clone failed: {process.stderr}")
+
+        return {"status": "ok", "message": f"Cloned '{repo_name}' successfully."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/fs/upload")
+async def upload_file(file: UploadFile = File(...)):
+    try:
+        file_path = os.path.join(WORKSPACE_DIR, file.filename)
+
+        # Save uploaded file
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+
+        # If zip, extract it
+        if file.filename.endswith(".zip"):
+            extract_dir = os.path.join(WORKSPACE_DIR, os.path.splitext(file.filename)[0])
+            with zipfile.ZipFile(file_path, 'r') as zip_ref:
+                zip_ref.extractall(extract_dir)
+            os.remove(file_path) # Remove zip after extraction
+            return {"status": "ok", "message": f"Uploaded and extracted '{file.filename}'."}
+
+        return {"status": "ok", "message": f"Uploaded '{file.filename}'."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 # --- Terminal Endpoint (WebSocket) ---
 @app.websocket("/ws/terminal")

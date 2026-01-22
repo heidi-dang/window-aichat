@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import Editor, { loader } from '@monaco-editor/react';
 import * as MonacoEditor from 'monaco-editor';
 import './App.css';
@@ -21,7 +21,6 @@ interface FileEntry {
 type ChatApiResponse = Partial<Message> & Record<string, unknown>;
 
 const API_BASE =
-  // Allow configuring backend base URL at build time (recommended for prod behind nginx)
   (import.meta as { env: Record<string, string | undefined> }).env?.VITE_API_BASE?.replace(/\/$/, '') ||
   '';
 
@@ -67,6 +66,10 @@ function App() {
   const [activeFile, setActiveFile] = useState<string | null>(null);
   const [fileContent, setFileContent] = useState<string>('// Select a file to edit');
   const editorRef = useRef<MonacoEditor.editor.IStandaloneCodeEditor | null>(null);
+
+  // Panel Visibility State
+  const [showSidebar, setShowSidebar] = useState(true);
+  const [showChat, setShowChat] = useState(true);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -289,6 +292,107 @@ function App() {
     }
   };
 
+  const cloneRepo = async () => {
+    if (!repoUrl) {
+      alert("Please enter a GitHub repository URL.");
+      return;
+    }
+    setIsLoading(true);
+    setMessages(prev => [...prev, {
+      sender: 'System',
+      text: `Cloning ${repoUrl}...`,
+      timestamp: new Date().toLocaleTimeString()
+    }]);
+
+    try {
+      const res = await fetch(`${API_BASE}/api/git/clone`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ repo_url: repoUrl })
+      });
+
+      const data = await res.json();
+      if (res.ok) {
+        setMessages(prev => [...prev, {
+          sender: 'System',
+          text: `Clone successful: ${data.message}`,
+          timestamp: new Date().toLocaleTimeString()
+        }]);
+        fetchFiles(); // Refresh file explorer
+      } else {
+        setMessages(prev => [...prev, {
+          sender: 'System',
+          text: `Clone failed: ${data.detail || data.message}`,
+          timestamp: new Date().toLocaleTimeString()
+        }]);
+      }
+    } catch (error: unknown) {
+      console.error("Failed to clone repo", error);
+      let errorMessage = "An unknown error occurred.";
+      if (error instanceof Error) {
+        errorMessage = error.message;
+      }
+      setMessages(prev => [...prev, {
+        sender: 'System',
+        text: `Error cloning repo: ${errorMessage}`,
+        timestamp: new Date().toLocaleTimeString()
+      }]);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const uploadFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    setIsLoading(true);
+    setMessages(prev => [...prev, {
+      sender: 'System',
+      text: `Uploading ${file.name}...`,
+      timestamp: new Date().toLocaleTimeString()
+    }]);
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+      const res = await fetch(`${API_BASE}/api/fs/upload`, {
+        method: 'POST',
+        body: formData
+      });
+
+      const data = await res.json();
+      if (res.ok) {
+        setMessages(prev => [...prev, {
+          sender: 'System',
+          text: `Upload successful: ${data.message}`,
+          timestamp: new Date().toLocaleTimeString()
+        }]);
+        fetchFiles(); // Refresh file explorer
+      } else {
+        setMessages(prev => [...prev, {
+          sender: 'System',
+          text: `Upload failed: ${data.detail || data.message}`,
+          timestamp: new Date().toLocaleTimeString()
+        }]);
+      }
+    } catch (error: unknown) {
+      console.error("Failed to upload file", error);
+      let errorMessage = "An unknown error occurred.";
+      if (error instanceof Error) {
+        errorMessage = error.message;
+      }
+      setMessages(prev => [...prev, {
+        sender: 'System',
+        text: `Error uploading file: ${errorMessage}`,
+        timestamp: new Date().toLocaleTimeString()
+      }]);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const getLanguage = (filename: string) => {
     const ext = filename.split('.').pop();
     switch (ext) {
@@ -305,67 +409,143 @@ function App() {
     }
   };
 
+  // Resizable Panel Logic
+  const sidebarRef = useRef<HTMLDivElement>(null);
+  const chatRef = useRef<HTMLDivElement>(null);
+  const [sidebarWidth, setSidebarWidth] = useState(250); // Default width
+  const [chatWidth, setChatWidth] = useState(350); // Default width
+  const [isResizingSidebar, setIsResizingSidebar] = useState(false);
+  const [isResizingChat, setIsResizingChat] = useState(false);
+
+  const startResizeSidebar = useCallback((e: React.MouseEvent) => {
+    setIsResizingSidebar(true);
+    e.preventDefault();
+  }, []);
+
+  const startResizeChat = useCallback((e: React.MouseEvent) => {
+    setIsResizingChat(true);
+    e.preventDefault();
+  }, []);
+
+  const stopResize = useCallback(() => {
+    setIsResizingSidebar(false);
+    setIsResizingChat(false);
+  }, []);
+
+  const resizePanel = useCallback((e: MouseEvent) => {
+    if (isResizingSidebar && sidebarRef.current) {
+      const newWidth = e.clientX;
+      if (newWidth > 150 && newWidth < window.innerWidth / 2) {
+        setSidebarWidth(newWidth);
+      }
+    } else if (isResizingChat && chatRef.current) {
+      const newWidth = window.innerWidth - e.clientX;
+      if (newWidth > 150 && newWidth < window.innerWidth / 2) {
+        setChatWidth(newWidth);
+      }
+    }
+  }, [isResizingSidebar, isResizingChat]);
+
+  useEffect(() => {
+    window.addEventListener('mousemove', resizePanel);
+    window.addEventListener('mouseup', stopResize);
+    return () => {
+      window.removeEventListener('mousemove', resizePanel);
+      window.removeEventListener('mouseup', stopResize);
+    };
+  }, [resizePanel, stopResize]);
+
+
   return (
     <div className="app-container">
-      {/* Sidebar */}
-      <div className="sidebar">
-        <div className="sidebar-header">
-          <h2>AI IDE</h2>
-        </div>
-        
-        <div className="sidebar-section">
-          <button onClick={() => setShowSettings(!showSettings)}>
-            ⚙ Settings
-          </button>
-        </div>
-
-        {showSettings && (
-          <div className="settings-panel">
-            <h3>Configuration</h3>
-            <input 
-              type="password" 
-              placeholder="Gemini API Key"
-              value={geminiKey}
-              onChange={(e) => setGeminiKey(e.target.value)}
-            />
-            <input 
-              type="password" 
-              placeholder="DeepSeek API Key"
-              value={deepseekKey}
-              onChange={(e) => setDeepseekKey(e.target.value)}
-            />
-            <input 
-              type="password" 
-              placeholder="GitHub Token"
-              value={githubToken}
-              onChange={(e) => setGithubToken(e.target.value)}
-            />
-            <input 
-              type="text" 
-              placeholder="GitHub Repo URL"
-              value={repoUrl}
-              onChange={(e) => setRepoUrl(e.target.value)}
-            />
-            <button className="save-btn" onClick={saveSettings}>Save</button>
-          </div>
-        )}
-
-        <div className="file-explorer">
-          <h3>Workspace</h3>
-          <button className="refresh-btn" onClick={fetchFiles}>↻ Refresh</button>
-          <ul>
-            {files.map((file, idx) => (
-              <li 
-                key={idx} 
-                className={`${file.type} ${activeFile === file.path ? 'active' : ''}`}
-                onClick={() => file.type === 'file' && openFile(file.path)}
-              >
-                {file.type === 'directory' ? '📁' : '📄'} {file.name}
-              </li>
-            ))}
-          </ul>
-        </div>
+      {/* Panel Toggle Buttons */}
+      <div className="panel-toggles">
+        <button onClick={() => setShowSidebar(!showSidebar)} className="toggle-btn">
+          {showSidebar ? '◀ Hide Sidebar' : '▶ Show Sidebar'}
+        </button>
+        <button onClick={() => setShowChat(!showChat)} className="toggle-btn">
+          {showChat ? 'Hide Chat ▶' : '◀ Show Chat'}
+        </button>
       </div>
+
+      {/* Sidebar */}
+      {showSidebar && (
+        <div className="sidebar" style={{ width: sidebarWidth }} ref={sidebarRef}>
+          <div className="sidebar-header">
+            <h2>AI IDE</h2>
+          </div>
+          
+          <div className="sidebar-section">
+            <button onClick={() => setShowSettings(!showSettings)}>
+              ⚙ Settings
+            </button>
+          </div>
+
+          {showSettings && (
+            <div className="settings-panel">
+              <h3>Configuration</h3>
+              <input 
+                type="password" 
+                placeholder="Gemini API Key"
+                value={geminiKey}
+                onChange={(e) => setGeminiKey(e.target.value)}
+              />
+              <input 
+                type="password" 
+                placeholder="DeepSeek API Key"
+                value={deepseekKey}
+                onChange={(e) => setDeepseekKey(e.target.value)}
+              />
+              <input 
+                type="password" 
+                placeholder="GitHub Token"
+                value={githubToken}
+                onChange={(e) => setGithubToken(e.target.value)}
+              />
+              <input 
+                type="text" 
+                placeholder="GitHub Repo URL"
+                value={repoUrl}
+                onChange={(e) => setRepoUrl(e.target.value)}
+              />
+              <button className="save-btn" onClick={saveSettings}>Save</button>
+            </div>
+          )}
+
+          <div className="sidebar-section">
+            <button onClick={cloneRepo} disabled={isLoading || !repoUrl}>
+              {isLoading ? 'Cloning...' : 'Clone GitHub Repo'}
+            </button>
+            <input 
+              type="file" 
+              id="upload-zip" 
+              style={{ display: 'none' }} 
+              onChange={uploadFile} 
+              disabled={isLoading}
+            />
+            <button onClick={() => document.getElementById('upload-zip')?.click()} disabled={isLoading}>
+              Upload Zip/File
+            </button>
+          </div>
+
+          <div className="file-explorer">
+            <h3>Workspace</h3>
+            <button className="refresh-btn" onClick={fetchFiles}>↻ Refresh</button>
+            <ul>
+              {files.map((file, idx) => (
+                <li 
+                  key={idx} 
+                  className={`${file.type} ${activeFile === file.path ? 'active' : ''}`}
+                  onClick={() => file.type === 'file' && openFile(file.path)}
+                >
+                  {file.type === 'directory' ? '📁' : '📄'} {file.name}
+                </li>
+              ))}
+            </ul>
+          </div>
+          <div className="resizer-handle" onMouseDown={startResizeSidebar}></div>
+        </div>
+      )}
 
       {/* Editor Area */}
       <div className="editor-area">
@@ -400,47 +580,50 @@ function App() {
       </div>
 
       {/* Chat Area */}
-      <div className="chat-area">
-        <div className="chat-header">
-          <h3>AI Assistant</h3>
-          <select value={selectedModel} onChange={(e) => setSelectedModel(e.target.value)}>
-            <option value="gemini">Gemini</option>
-            <option value="deepseek">DeepSeek</option>
-          </select>
-        </div>
-        <div className="messages-list">
-          {messages.map((msg, index) => (
-            <div key={index} className={`message ${msg.sender === 'You' ? 'user' : 'ai'}`}>
-              <div className="message-header">
-                <span className="sender">{msg.sender}</span>
-                <span className="time">{msg.timestamp}</span>
+      {showChat && (
+        <div className="chat-area" style={{ width: chatWidth }} ref={chatRef}>
+          <div className="chat-header">
+            <h3>AI Assistant</h3>
+            <select value={selectedModel} onChange={(e) => setSelectedModel(e.target.value)}>
+              <option value="gemini">Gemini</option>
+              <option value="deepseek">DeepSeek</option>
+            </select>
+          </div>
+          <div className="messages-list">
+            {messages.map((msg, index) => (
+              <div key={index} className={`message ${msg.sender === 'You' ? 'user' : 'ai'}`}>
+                <div className="message-header">
+                  <span className="sender">{msg.sender}</span>
+                  <span className="time">{msg.timestamp}</span>
+                </div>
+                <div className="message-content">
+                  {msg.text}
+                </div>
               </div>
-              <div className="message-content">
-                {msg.text}
-              </div>
-            </div>
-          ))}
-          {isLoading && <div className="message ai"><div className="message-content">Thinking...</div></div>}
-          <div ref={messagesEndRef} />
-        </div>
+            ))}
+            {isLoading && <div className="message ai"><div className="message-content">Thinking...</div></div>}
+            <div ref={messagesEndRef} />
+          </div>
 
-        <div className="input-area">
-          <textarea
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                sendMessage();
-              }
-            }}
-            placeholder="Ask AI..."
-          />
-          <button onClick={sendMessage} disabled={isLoading}>
-            ➤
-          </button>
+          <div className="input-area">
+            <textarea
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  sendMessage();
+                }
+              }}
+              placeholder="Ask AI..."
+            />
+            <button onClick={sendMessage} disabled={isLoading}>
+              ➤
+            </button>
+          </div>
+          <div className="resizer-handle" onMouseDown={startResizeChat}></div>
         </div>
-      </div>
+      )}
     </div>
   );
 }

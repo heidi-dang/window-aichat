@@ -1,0 +1,37 @@
+version: '3.8'
+
+services:
+  backend:
+    image: ghcr.io/heidi-dang/window-aichat/backend:latest
+    container_name: window-aichat-backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./server_cache:/app/server_cache
+      - ./workspace:/app/workspace
+    environment:
+      - PYTHONUNBUFFERED=1
+    restart: unless-stopped
+    networks:
+      - aichat-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/docs"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  frontend:
+    image: ghcr.io/heidi-dang/window-aichat/frontend:latest
+    container_name: window-aichat-frontend
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+    networks:
+      - aichat-network
+
+networks:
+  aichat-network:
+    driver: bridge

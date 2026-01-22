@@ -26,16 +26,44 @@ body {
   display: flex;
   height: 100vh;
   width: 100vw;
+  position: relative; /* Needed for absolute positioning of toggle buttons */
 }
+
+/* Panel Toggle Buttons */
+.panel-toggles {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10;
+  display: flex;
+  gap: 10px;
+}
+
+.toggle-btn {
+  background-color: var(--input-bg);
+  color: var(--text-color);
+  border: 1px solid var(--border-color);
+  padding: 5px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.8rem;
+  transition: background-color 0.2s;
+}
+
+.toggle-btn:hover {
+  background-color: var(--active-item-bg);
+}
+
 
 /* Sidebar */
 .sidebar {
-  width: 250px;
   background-color: var(--sidebar-bg);
   display: flex;
   flex-direction: column;
   border-right: 1px solid var(--border-color);
   flex-shrink: 0;
+  position: relative; /* For resizer handle */
 }
 
 .sidebar-header {
@@ -65,6 +93,7 @@ body {
   border-radius: 2px;
   text-align: center;
   transition: background-color 0.2s;
+  margin-bottom: 5px; /* Spacing for new buttons */
 }
 
 .sidebar-section button:hover {
@@ -227,12 +256,12 @@ body {
 
 /* Chat Area */
 .chat-area {
-  width: 350px;
   background-color: var(--chat-bg);
   display: flex;
   flex-direction: column;
   border-left: 1px solid var(--border-color);
   flex-shrink: 0;
+  position: relative; /* For resizer handle */
 }
 
 .chat-header {
@@ -266,7 +295,7 @@ body {
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 15px;
+  gap: 10px;
 }
 
 .message {
@@ -353,4 +382,22 @@ body {
 .input-area button:disabled {
   background-color: #444;
   cursor: not-allowed;
+}
+
+/* Resizer Handle */
+.resizer-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 5px;
+  cursor: ew-resize;
+  z-index: 1;
+}
+
+.sidebar .resizer-handle {
+  right: -2px;
+}
+
+.chat-area .resizer-handle {
+  left: -2px;
 }
