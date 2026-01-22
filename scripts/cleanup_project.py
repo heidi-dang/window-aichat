@@ -1,13 +1,14 @@
 import os
 import shutil
 
+
 def cleanup():
     # Files to delete (Unused, redundant, or old)
     files_to_delete = [
-        "main-old.py",               # Old version
+        "main-old.py",  # Old version
         "setup_developer_tools.py",  # Already integrated into main.py
         "install_dependencies.cmd",  # Redundant (install.bat is better)
-        "build_app.cmd",             # Redundant (build_app.py is better)
+        "build_app.cmd",  # Redundant (build_app.py is better)
     ]
 
     # Directories to create for organization
@@ -21,7 +22,7 @@ def cleanup():
         "diagnose.sh",
         "fix_deployment.sh",
         "fix_env.py",
-        "test_on_windows.py"
+        "test_on_windows.py",
     ]
 
     print("=== Starting Project Cleanup ===")
@@ -57,6 +58,7 @@ def cleanup():
     print("Your project root is now cleaner.")
     print("Core logic is separated into 'ai_core.py'.")
     print("Utility scripts are in the 'scripts/' folder.")
+
 
 if __name__ == "__main__":
     cleanup()

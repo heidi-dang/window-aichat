@@ -6,6 +6,7 @@ import requests
 import google.generativeai as genai
 from ai_core import SecureConfig
 
+
 class SettingsWindow:
     def __init__(self, parent, config_path):
         self.parent = parent
@@ -22,7 +23,7 @@ class SettingsWindow:
         self.window.grab_set()
 
         try:
-            self.window.iconbitmap(default='icon.ico')
+            self.window.iconbitmap(default="icon.ico")
         except Exception:
             pass
 
@@ -36,7 +37,7 @@ class SettingsWindow:
         height = self.window.winfo_height()
         x = (self.window.winfo_screenwidth() // 2) - (width // 2)
         y = (self.window.winfo_screenheight() // 2) - (height // 2)
-        self.window.geometry(f'{width}x{height}+{x}+{y}')
+        self.window.geometry(f"{width}x{height}+{x}+{y}")
 
     def create_widgets(self):
         main_frame = tk.Frame(self.window, bg="#f0f0f0", padx=20, pady=20)
@@ -47,7 +48,7 @@ class SettingsWindow:
             text="API Configuration",
             font=("Segoe UI", 16, "bold"),
             bg="#f0f0f0",
-            fg="#2c3e50"
+            fg="#2c3e50",
         )
         title_label.pack(pady=(0, 20))
 
@@ -57,11 +58,7 @@ class SettingsWindow:
         self._create_button_frame(main_frame)
 
         self.status_label = tk.Label(
-            main_frame,
-            text="",
-            bg="#f0f0f0",
-            font=("Segoe UI", 9),
-            fg="#e74c3c"
+            main_frame, text="", bg="#f0f0f0", font=("Segoe UI", 9), fg="#e74c3c"
         )
         self.status_label.pack(pady=(15, 0))
 
@@ -73,25 +70,36 @@ class SettingsWindow:
             bg="#f0f0f0",
             fg="#2c3e50",
             padx=10,
-            pady=10
+            pady=10,
         )
         gemini_frame.pack(fill=tk.X, pady=(0, 15))
 
-        tk.Label(gemini_frame, text="API Key:", bg="#f0f0f0", font=("Segoe UI", 9)).pack(anchor=tk.W)
-        self.gemini_key = tk.Entry(gemini_frame, width=50, show="•", font=("Segoe UI", 9))
+        tk.Label(
+            gemini_frame, text="API Key:", bg="#f0f0f0", font=("Segoe UI", 9)
+        ).pack(anchor=tk.W)
+        self.gemini_key = tk.Entry(
+            gemini_frame, width=50, show="•", font=("Segoe UI", 9)
+        )
         self.gemini_key.pack(fill=tk.X, pady=(2, 5))
 
-        tk.Label(gemini_frame, text="Model:", bg="#f0f0f0", font=("Segoe UI", 9)).pack(anchor=tk.W, pady=(5, 0))
+        tk.Label(gemini_frame, text="Model:", bg="#f0f0f0", font=("Segoe UI", 9)).pack(
+            anchor=tk.W, pady=(5, 0)
+        )
         self.gemini_model = ttk.Combobox(
             gemini_frame,
             values=["gemini-2.0-flash", "gemini-2.0-pro-exp"],
             state="readonly",
-            font=("Segoe UI", 9)
+            font=("Segoe UI", 9),
         )
         self.gemini_model.pack(fill=tk.X, pady=(2, 0))
         self.gemini_model.set("gemini-2.0-flash")
 
-        tk.Label(gemini_frame, text="Max Retries on Error:", bg="#f0f0f0", font=("Segoe UI", 9)).pack(anchor=tk.W, pady=(5,0))
+        tk.Label(
+            gemini_frame,
+            text="Max Retries on Error:",
+            bg="#f0f0f0",
+            font=("Segoe UI", 9),
+        ).pack(anchor=tk.W, pady=(5, 0))
         self.gemini_max_retries = tk.Entry(gemini_frame, width=10, font=("Segoe UI", 9))
         self.gemini_max_retries.pack(anchor=tk.W, pady=(2, 5))
 
@@ -102,7 +110,7 @@ class SettingsWindow:
             bg="#4285f4",
             fg="white",
             font=("Segoe UI", 9),
-            cursor="hand2"
+            cursor="hand2",
         )
         gemini_btn.pack(pady=(10, 0))
 
@@ -114,12 +122,16 @@ class SettingsWindow:
             bg="#f0f0f0",
             fg="#2c3e50",
             padx=10,
-            pady=10
+            pady=10,
         )
         deepseek_frame.pack(fill=tk.X, pady=(0, 15))
 
-        tk.Label(deepseek_frame, text="API Key:", bg="#f0f0f0", font=("Segoe UI", 9)).pack(anchor=tk.W)
-        self.deepseek_key = tk.Entry(deepseek_frame, width=50, show="•", font=("Segoe UI", 9))
+        tk.Label(
+            deepseek_frame, text="API Key:", bg="#f0f0f0", font=("Segoe UI", 9)
+        ).pack(anchor=tk.W)
+        self.deepseek_key = tk.Entry(
+            deepseek_frame, width=50, show="•", font=("Segoe UI", 9)
+        )
         self.deepseek_key.pack(fill=tk.X, pady=(2, 5))
 
         deepseek_btn = tk.Button(
@@ -129,7 +141,7 @@ class SettingsWindow:
             bg="#00a67e",
             fg="white",
             font=("Segoe UI", 9),
-            cursor="hand2"
+            cursor="hand2",
         )
         deepseek_btn.pack(pady=(10, 0))
 
@@ -141,24 +153,31 @@ class SettingsWindow:
             bg="#f0f0f0",
             fg="#2c3e50",
             padx=10,
-            pady=10
+            pady=10,
         )
         gh_frame.pack(fill=tk.X, pady=(0, 15))
 
-        tk.Label(gh_frame, text="Personal Access Token:", bg="#f0f0f0", font=("Segoe UI", 9)).pack(anchor=tk.W)
+        tk.Label(
+            gh_frame, text="Personal Access Token:", bg="#f0f0f0", font=("Segoe UI", 9)
+        ).pack(anchor=tk.W)
         self.github_token = tk.Entry(gh_frame, width=50, show="•", font=("Segoe UI", 9))
         self.github_token.pack(fill=tk.X, pady=(2, 5))
 
-        tk.Label(gh_frame, text="(Required for private repos and higher rate limits)",
-                 bg="#f0f0f0", fg="#7f8c8d", font=("Segoe UI", 8)).pack(anchor=tk.W)
-        
+        tk.Label(
+            gh_frame,
+            text="(Required for private repos and higher rate limits)",
+            bg="#f0f0f0",
+            fg="#7f8c8d",
+            font=("Segoe UI", 8),
+        ).pack(anchor=tk.W)
+
         # Note about OAuth (future enhancement)
         oauth_note = tk.Label(
-            gh_frame, 
+            gh_frame,
             text="Note: OAuth authentication support is planned for future releases.",
-            bg="#f0f0f0", 
-            fg="#95a5a6", 
-            font=("Segoe UI", 7, "italic")
+            bg="#f0f0f0",
+            fg="#95a5a6",
+            font=("Segoe UI", 7, "italic"),
         )
         oauth_note.pack(anchor=tk.W, pady=(2, 0))
 
@@ -174,7 +193,7 @@ class SettingsWindow:
             fg="white",
             font=("Segoe UI", 10, "bold"),
             width=12,
-            cursor="hand2"
+            cursor="hand2",
         )
         save_btn.pack(side=tk.LEFT, padx=(0, 10))
 
@@ -186,7 +205,7 @@ class SettingsWindow:
             fg="white",
             font=("Segoe UI", 10),
             width=12,
-            cursor="hand2"
+            cursor="hand2",
         )
         test_btn.pack(side=tk.LEFT, padx=10)
 
@@ -198,7 +217,7 @@ class SettingsWindow:
             fg="white",
             font=("Segoe UI", 10),
             width=12,
-            cursor="hand2"
+            cursor="hand2",
         )
         cancel_btn.pack(side=tk.LEFT, padx=(10, 0))
 
@@ -219,7 +238,7 @@ class SettingsWindow:
             "deepseek_api_key": self.deepseek_key.get().strip(),
             "github_token": self.github_token.get().strip(),
             "gemini_model": self.gemini_model.get(),
-            "gemini_max_retries": self.gemini_max_retries.get().strip()
+            "gemini_max_retries": self.gemini_max_retries.get().strip(),
         }
         try:
             config_dir = os.path.dirname(self.config_path)
@@ -227,13 +246,15 @@ class SettingsWindow:
                 os.makedirs(config_dir)
             self.secure_config.save_config(config)
             self.status_label.config(text="Settings saved successfully!", fg="#2ecc71")
-            if hasattr(self.parent, 'chat_client'):
+            if hasattr(self.parent, "chat_client"):
                 self.parent.chat_client.config = config
                 self.parent.chat_client.configure_apis()
-            if hasattr(self.parent, 'update_github_handler'):
+            if hasattr(self.parent, "update_github_handler"):
                 self.parent.update_github_handler(config.get("github_token", ""))
         except Exception as e:
-            self.status_label.config(text=f"Error saving settings: {str(e)}", fg="#e74c3c")
+            self.status_label.config(
+                text=f"Error saving settings: {str(e)}", fg="#e74c3c"
+            )
 
     def test_connection(self):
         gemini_key = self.gemini_key.get().strip()
@@ -245,8 +266,10 @@ class SettingsWindow:
         if gemini_key:
             try:
                 genai.configure(api_key=gemini_key)
-                model = genai.GenerativeModel('gemini-1.5-flash')
-                response = model.generate_content("Say 'TEST OK' only", generation_config={"max_output_tokens": 5})
+                model = genai.GenerativeModel("gemini-1.5-flash")
+                response = model.generate_content(
+                    "Say 'TEST OK' only", generation_config={"max_output_tokens": 5}
+                )
                 results.append("✓ Gemini: Connected")
             except Exception as e:
                 results.append(f"✗ Gemini: {str(e)[:50]}")
@@ -256,19 +279,19 @@ class SettingsWindow:
         if deepseek_key:
             try:
                 headers = {
-                    'Authorization': f'Bearer {deepseek_key}',
-                    'Content-Type': 'application/json'
+                    "Authorization": f"Bearer {deepseek_key}",
+                    "Content-Type": "application/json",
                 }
                 data = {
                     "model": "deepseek-chat",
                     "messages": [{"role": "user", "content": "Say 'TEST OK'"}],
-                    "max_tokens": 5
+                    "max_tokens": 5,
                 }
                 response = requests.post(
                     "https://api.deepseek.com/chat/completions",
                     headers=headers,
                     json=data,
-                    timeout=10
+                    timeout=10,
                 )
                 if response.status_code == 200:
                     results.append("✓ DeepSeek: Connected")

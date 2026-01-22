@@ -2,6 +2,7 @@ import tkinter as tk
 from tkinter import scrolledtext, ttk, messagebox
 import threading
 
+
 class DevToolWindow(tk.Toplevel):
     def __init__(self, parent, title: str, input_label_text: str, action_callback):
         super().__init__(parent)
@@ -11,7 +12,7 @@ class DevToolWindow(tk.Toplevel):
         self.grab_set()
 
         try:
-            self.iconbitmap(default='icon.ico')
+            self.iconbitmap(default="icon.ico")
         except Exception:
             pass
 
@@ -25,9 +26,13 @@ class DevToolWindow(tk.Toplevel):
 
         # Input frame
         input_container = tk.Frame(paned_window, padx=5, pady=5)
-        input_frame = tk.LabelFrame(input_container, text=input_label_text, padx=5, pady=5)
+        input_frame = tk.LabelFrame(
+            input_container, text=input_label_text, padx=5, pady=5
+        )
         input_frame.pack(fill=tk.BOTH, expand=True)
-        self.input_text = scrolledtext.ScrolledText(input_frame, wrap=tk.WORD, height=10, font=("Segoe UI", 10))
+        self.input_text = scrolledtext.ScrolledText(
+            input_frame, wrap=tk.WORD, height=10, font=("Segoe UI", 10)
+        )
         self.input_text.pack(fill=tk.BOTH, expand=True)
         paned_window.add(input_container)
 
@@ -35,7 +40,9 @@ class DevToolWindow(tk.Toplevel):
         output_container = tk.Frame(paned_window, padx=5, pady=5)
         output_frame = tk.LabelFrame(output_container, text="Result", padx=5, pady=5)
         output_frame.pack(fill=tk.BOTH, expand=True)
-        self.output_text = scrolledtext.ScrolledText(output_frame, wrap=tk.WORD, state=tk.DISABLED, font=("Segoe UI", 10))
+        self.output_text = scrolledtext.ScrolledText(
+            output_frame, wrap=tk.WORD, state=tk.DISABLED, font=("Segoe UI", 10)
+        )
         self.output_text.pack(fill=tk.BOTH, expand=True)
         paned_window.add(output_container)
 
@@ -43,26 +50,46 @@ class DevToolWindow(tk.Toplevel):
         button_frame = tk.Frame(main_frame, pady=5)
         button_frame.pack(fill=tk.X)
 
-        self.run_btn = tk.Button(button_frame, text="Run", command=self.run_action, bg="#2ecc71", fg="white", font=("Segoe UI", 10, "bold"))
+        self.run_btn = tk.Button(
+            button_frame,
+            text="Run",
+            command=self.run_action,
+            bg="#2ecc71",
+            fg="white",
+            font=("Segoe UI", 10, "bold"),
+        )
         self.run_btn.pack(side=tk.LEFT, padx=(0, 10))
 
-        self.copy_btn = tk.Button(button_frame, text="Copy Result", command=self.copy_result, bg="#3498db", fg="white", font=("Segoe UI", 10))
+        self.copy_btn = tk.Button(
+            button_frame,
+            text="Copy Result",
+            command=self.copy_result,
+            bg="#3498db",
+            fg="white",
+            font=("Segoe UI", 10),
+        )
         self.copy_btn.pack(side=tk.LEFT)
 
-        self.status_label = tk.Label(main_frame, text="Ready. Paste your content and click 'Run'.", anchor='w')
-        self.status_label.pack(fill=tk.X, pady=(5,0))
+        self.status_label = tk.Label(
+            main_frame, text="Ready. Paste your content and click 'Run'.", anchor="w"
+        )
+        self.status_label.pack(fill=tk.X, pady=(5, 0))
 
     def run_action(self):
         input_content = self.input_text.get("1.0", tk.END).strip()
         if not input_content:
-            messagebox.showwarning("Input Missing", "Please provide input code/text.", parent=self)
+            messagebox.showwarning(
+                "Input Missing", "Please provide input code/text.", parent=self
+            )
             return
 
         self.status_label.config(text="Processing request with Gemini...")
         self.run_btn.config(state=tk.DISABLED)
         self.update()
 
-        threading.Thread(target=self._execute_callback, args=(input_content,), daemon=True).start()
+        threading.Thread(
+            target=self._execute_callback, args=(input_content,), daemon=True
+        ).start()
 
     def _execute_callback(self, content):
         try:
@@ -75,6 +102,7 @@ class DevToolWindow(tk.Toplevel):
             self.after(0, self.display_result, result)
         except Exception as e:
             import traceback
+
             error_details = f"An error occurred: {e}\n\n{traceback.format_exc()}"
             self.after(0, self.display_result, error_details)
 

@@ -12,45 +12,70 @@ PROJECT_NAME = "window-aichat-web"
 BACKEND_PORT = 8000
 FRONTEND_PORT = 5173
 
+
 def install_backend_deps():
     print(">>> [1/4] Installing Backend Dependencies...")
     # Check if pip is installed
     try:
-        subprocess.run([sys.executable, "-m", "pip", "--version"], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run(
+            [sys.executable, "-m", "pip", "--version"],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
     except subprocess.CalledProcessError:
         print("⚠️ pip not found. Attempting to install...")
         try:
             subprocess.check_call([sys.executable, "-m", "ensurepip", "--default-pip"])
-            subprocess.check_call([sys.executable, "-m", "pip", "install", "--upgrade", "pip"])
+            subprocess.check_call(
+                [sys.executable, "-m", "pip", "install", "--upgrade", "pip"]
+            )
             print("✅ pip installed via ensurepip.")
         except subprocess.CalledProcessError:
             print("⚠️ ensurepip failed. Downloading get-pip.py...")
             try:
-                urllib.request.urlretrieve("https://bootstrap.pypa.io/get-pip.py", "get-pip.py")
+                urllib.request.urlretrieve(
+                    "https://bootstrap.pypa.io/get-pip.py", "get-pip.py"
+                )
                 subprocess.check_call([sys.executable, "get-pip.py"])
-                if os.path.exists("get-pip.py"): os.remove("get-pip.py")
+                if os.path.exists("get-pip.py"):
+                    os.remove("get-pip.py")
                 print("✅ pip installed via get-pip.py.")
             except Exception as e:
-                print(f"❌ Error: Could not install pip. {e}\nPlease install Python with pip enabled.")
+                print(
+                    f"❌ Error: Could not install pip. {e}\nPlease install Python with pip enabled."
+                )
                 sys.exit(1)
 
     if not os.path.exists("requirements.txt"):
         print("ℹ️ requirements.txt not found. Creating default...")
         with open("requirements.txt", "w") as f:
-            f.write("fastapi\nuvicorn\npydantic\npython-multipart\naiofiles\npsutil\nrequests\ngoogle-generativeai\ncryptography\n")
+            f.write(
+                "fastapi\nuvicorn\npydantic\npython-multipart\naiofiles\npsutil\nrequests\ngoogle-generativeai\ncryptography\n"
+            )
 
     try:
-        subprocess.check_call([sys.executable, "-m", "pip", "install", "-r", "requirements.txt"])
+        subprocess.check_call(
+            [sys.executable, "-m", "pip", "install", "-r", "requirements.txt"]
+        )
     except subprocess.CalledProcessError:
-        print("Error installing requirements. Please check the requirements.txt file and your pip installation.")
+        print(
+            "Error installing requirements. Please check the requirements.txt file and your pip installation."
+        )
         sys.exit(1)
+
 
 def setup_frontend():
     print(">>> [2/4] Setting up React Frontend...")
-    
+
     def check_node():
         try:
-            subprocess.run(["node", "-v"], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.run(
+                ["node", "-v"],
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
             return True
         except (FileNotFoundError, subprocess.CalledProcessError):
             return False
@@ -67,16 +92,25 @@ def setup_frontend():
             print("⚠️ Node.js not found. Attempting to install via winget...")
             try:
                 # Check for winget
-                subprocess.run(["winget", "--version"], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                subprocess.run(
+                    ["winget", "--version"],
+                    check=True,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
                 print("📦 Installing Node.js LTS (Accept prompts if any)...")
-                subprocess.check_call(["winget", "install", "-e", "--id", "OpenJS.NodeJS.LTS"])
-                
+                subprocess.check_call(
+                    ["winget", "install", "-e", "--id", "OpenJS.NodeJS.LTS"]
+                )
+
                 if os.path.exists(node_path):
                     os.environ["PATH"] += os.pathsep + node_path
                     print("✅ Node.js installed and added to PATH.")
                 else:
-                    print("✅ Node.js installed. Please restart the script to pick up the new PATH.")
-                    sys.exit(0) 
+                    print(
+                        "✅ Node.js installed. Please restart the script to pick up the new PATH."
+                    )
+                    sys.exit(0)
             except (FileNotFoundError, subprocess.CalledProcessError):
                 print("❌ Error: Node.js is not installed and winget failed.")
                 print("Please install Node.js manually from https://nodejs.org/")
@@ -84,26 +118,33 @@ def setup_frontend():
 
     if not os.path.exists(PROJECT_NAME):
         print("Creating Vite project...")
-        subprocess.check_call(f"npm create vite@latest {PROJECT_NAME} -- --template react", shell=True)
-    
+        subprocess.check_call(
+            f"npm create vite@latest {PROJECT_NAME} -- --template react", shell=True
+        )
+
     os.chdir(PROJECT_NAME)
-    
+
     print("Installing Frontend Dependencies (this may take a minute)...")
     subprocess.check_call("npm install", shell=True)
     subprocess.check_call("npm install -D tailwindcss postcss autoprefixer", shell=True)
     subprocess.check_call("npx tailwindcss init -p", shell=True)
-    subprocess.check_call("npm install lucide-react @monaco-editor/react axios clsx tailwind-merge xterm xterm-addon-fit", shell=True)
-    
+    subprocess.check_call(
+        "npm install lucide-react @monaco-editor/react axios clsx tailwind-merge xterm xterm-addon-fit",
+        shell=True,
+    )
+
     print("Generating Component Files...")
     generate_files()
-    
+
     os.chdir("..")
+
 
 def write_file(path, content):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         f.write(content)
     print(f"Generated: {path}")
+
 
 def generate_files():
     # Clean up boilerplate files from default Vite template to prevent conflicts
@@ -123,7 +164,9 @@ def generate_files():
         print("Removed boilerplate folder: src/assets")
 
     # 1. Tailwind Config
-    write_file("tailwind.config.js", """/** @type {import('tailwindcss').Config} */
+    write_file(
+        "tailwind.config.js",
+        """/** @type {import('tailwindcss').Config} */
 export default {
   content: [
     "./index.html",
@@ -146,18 +189,24 @@ export default {
     },
   },
   plugins: [],
-}""")
+}""",
+    )
 
     # 1.5 PostCSS Config
-    write_file("postcss.config.js", """export default {
+    write_file(
+        "postcss.config.js",
+        """export default {
   plugins: {
     tailwindcss: {},
     autoprefixer: {},
   },
-}""")
+}""",
+    )
 
     # 2. CSS
-    write_file("src/index.css", """@tailwind base;
+    write_file(
+        "src/index.css",
+        """@tailwind base;
 @tailwind components;
 @tailwind utilities;
 
@@ -173,10 +222,13 @@ body {
 ::-webkit-scrollbar-track { background: #1E1E1E; }
 ::-webkit-scrollbar-thumb { background: #333; border-radius: 4px; }
 ::-webkit-scrollbar-thumb:hover { background: #555; }
-""")
+""",
+    )
 
     # 2.5 Vite Config (Proxy for Local Dev)
-    write_file("vite.config.js", """import { defineConfig } from 'vite'
+    write_file(
+        "vite.config.js",
+        """import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
 export default defineConfig({
@@ -193,10 +245,13 @@ export default defineConfig({
       }
     }
   }
-})""")
+})""",
+    )
 
     # 3. App.jsx
-    write_file("src/App.jsx", """import React, { useState } from 'react';
+    write_file(
+        "src/App.jsx",
+        """import React, { useState } from 'react';
 import Sidebar from './components/Sidebar';
 import FileExplorer from './components/FileExplorer';
 import EditorArea from './components/EditorArea'; 
@@ -297,10 +352,13 @@ function App() {
     </div>
   );
 }
-export default App;""")
+export default App;""",
+    )
 
     # 4. Components
-    write_file("src/components/Sidebar.jsx", """import React, { useState } from 'react';
+    write_file(
+        "src/components/Sidebar.jsx",
+        """import React, { useState } from 'react';
 import { Wrench, MessageSquare } from 'lucide-react';
 import ChatWindow from './ChatWindow';
 import ToolsPanel from './ToolsPanel';
@@ -337,9 +395,12 @@ const Sidebar = ({ config, setConfig, messages, onSendMessage, activeCode }) => 
     </div>
   );
 };
-export default Sidebar;""")
+export default Sidebar;""",
+    )
 
-    write_file("src/components/ToolsPanel.jsx", """import React, { useState } from 'react';
+    write_file(
+        "src/components/ToolsPanel.jsx",
+        """import React, { useState } from 'react';
 import axios from 'axios';
 import { Copy } from 'lucide-react';
 
@@ -384,9 +445,12 @@ const ToolsPanel = ({ activeCode, config }) => {
     </div>
   );
 };
-export default ToolsPanel;""")
+export default ToolsPanel;""",
+    )
 
-    write_file("src/components/FileExplorer.jsx", """import React, { useState, useEffect } from 'react';
+    write_file(
+        "src/components/FileExplorer.jsx",
+        """import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { Folder, FileCode, RefreshCw, Plus } from 'lucide-react';
 
@@ -421,9 +485,12 @@ const FileExplorer = ({ onFileSelect }) => {
     </div>
   );
 };
-export default FileExplorer;""")
+export default FileExplorer;""",
+    )
 
-    write_file("src/components/EditorArea.jsx", """import React from 'react';
+    write_file(
+        "src/components/EditorArea.jsx",
+        """import React from 'react';
 import Editor from '@monaco-editor/react';
 import { Save } from 'lucide-react';
 
@@ -441,9 +508,12 @@ const EditorArea = ({ file, content, onSave, onChange }) => {
     </div>
   );
 };
-export default EditorArea;""")
+export default EditorArea;""",
+    )
 
-    write_file("src/components/TerminalPanel.jsx", """import React, { useEffect, useRef } from 'react';
+    write_file(
+        "src/components/TerminalPanel.jsx",
+        """import React, { useEffect, useRef } from 'react';
 import { Terminal } from 'xterm';
 import { FitAddon } from 'xterm-addon-fit';
 import { Terminal as TerminalIcon, ChevronUp, ChevronDown } from 'lucide-react';
@@ -490,9 +560,12 @@ const TerminalPanel = ({ isOpen, onToggle }) => {
     </div>
   );
 };
-export default TerminalPanel;""")
+export default TerminalPanel;""",
+    )
 
-    write_file("src/components/ChatWindow.jsx", """import React, { useState, useRef, useEffect } from 'react';
+    write_file(
+        "src/components/ChatWindow.jsx",
+        """import React, { useState, useRef, useEffect } from 'react';
 import { Send } from 'lucide-react';
 
 const ChatWindow = ({ messages, onSendMessage }) => {
@@ -524,20 +597,29 @@ const ChatWindow = ({ messages, onSendMessage }) => {
     </div>
   );
 };
-export default ChatWindow;""")
+export default ChatWindow;""",
+    )
+
 
 def run_servers():
     print(">>> [3/4] Starting Backend Server...")
     backend_process = subprocess.Popen(
-        [sys.executable, "-m", "uvicorn", "backend:app", "--host", "0.0.0.0", "--port", str(BACKEND_PORT)],
-        cwd=os.getcwd()
+        [
+            sys.executable,
+            "-m",
+            "uvicorn",
+            "backend:app",
+            "--host",
+            "0.0.0.0",
+            "--port",
+            str(BACKEND_PORT),
+        ],
+        cwd=os.getcwd(),
     )
 
     print(">>> [4/4] Starting Frontend Server...")
     frontend_process = subprocess.Popen(
-        ["npm", "run", "dev"],
-        cwd=os.path.join(os.getcwd(), PROJECT_NAME),
-        shell=True
+        ["npm", "run", "dev"], cwd=os.path.join(os.getcwd(), PROJECT_NAME), shell=True
     )
 
     print(f"\n{'='*50}")
@@ -557,6 +639,7 @@ def run_servers():
         print("\nStopping servers...")
         backend_process.terminate()
         frontend_process.terminate()
+
 
 if __name__ == "__main__":
     # Ensure we are in the project root
