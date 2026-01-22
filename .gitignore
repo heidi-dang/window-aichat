@@ -24,6 +24,11 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+.history-memo/
+.idea
+.vscode
+_gemini_code_review/
+
 
 # Configuration & Secrets
 config.json
