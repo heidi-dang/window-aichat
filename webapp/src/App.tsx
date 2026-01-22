@@ -1,7 +1,10 @@
 import { useState, useEffect, useRef } from 'react';
-import Editor, { OnMount } from '@monaco-editor/react';
+import Editor, { loader } from '@monaco-editor/react';
 import * as MonacoEditor from 'monaco-editor';
 import './App.css';
+
+// Configure Monaco loader to use the local monaco-editor instance
+loader.config({ monaco: MonacoEditor });
 
 interface Message {
   sender: string;
@@ -13,6 +16,35 @@ interface FileEntry {
   name: string;
   type: 'file' | 'directory';
   path: string;
+}
+
+type ChatApiResponse = Partial<Message> & Record<string, unknown>;
+
+const API_BASE =
+  // Allow configuring backend base URL at build time (recommended for prod behind nginx)
+  (import.meta as { env: Record<string, string | undefined> }).env?.VITE_API_BASE?.replace(/\/$/, '') ||
+  '';
+
+async function readErrorText(res: Response): Promise<string> {
+  try {
+    const text = await res.text();
+    return text || `${res.status} ${res.statusText}`;
+  } catch {
+    return `${res.status} ${res.statusText}`;
+  }
+}
+
+function toMessage(obj: unknown, fallbackSender = 'System'): Message {
+  const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  if (!obj || typeof obj !== 'object') {
+    return { sender: fallbackSender, text: String(obj ?? ''), timestamp: now };
+  }
+  const anyObj = obj as ChatApiResponse;
+  return {
+    sender: typeof anyObj.sender === 'string' ? anyObj.sender : fallbackSender,
+    text: typeof anyObj.text === 'string' ? anyObj.text : JSON.stringify(anyObj),
+    timestamp: typeof anyObj.timestamp === 'string' ? anyObj.timestamp : now
+  };
 }
 
 function App() {
@@ -50,7 +82,7 @@ function App() {
 
   const fetchFiles = async () => {
     try {
-      const res = await fetch('http://localhost:8000/api/fs/list');
+      const res = await fetch(`${API_BASE}/api/fs/list`);
       if (res.ok) {
         const data = await res.json();
         setFiles(data);
@@ -71,7 +103,7 @@ function App() {
 
   const openFile = async (path: string) => {
     try {
-      const res = await fetch('http://localhost:8000/api/fs/read', {
+      const res = await fetch(`${API_BASE}/api/fs/read`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ path })
@@ -81,7 +113,7 @@ function App() {
         setFileContent(data.content);
         setActiveFile(path);
       } else {
-        const errorText = await res.text();
+        const errorText = await readErrorText(res);
         alert(`Failed to read file: ${errorText}`);
       }
     } catch (error: unknown) {
@@ -99,7 +131,7 @@ function App() {
     const content = editorRef.current ? editorRef.current.getValue() : fileContent;
     
     try {
-      const res = await fetch('http://localhost:8000/api/fs/write', {
+      const res = await fetch(`${API_BASE}/api/fs/write`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ path: activeFile, content })
@@ -107,7 +139,7 @@ function App() {
       if (res.ok) {
         console.log('File saved');
       } else {
-        const errorText = await res.text();
+        const errorText = await readErrorText(res);
         alert(`Failed to save file: ${errorText}`);
       }
     } catch (error: unknown) {
@@ -123,8 +155,9 @@ function App() {
   const runTool = async (tool: string) => {
     if (!editorRef.current) return;
     
-    // Get selected text or full content
-    const selection = editorRef.current.getModel()?.getValueInRange(editorRef.current.getSelection()!) || "";
+    const model = editorRef.current.getModel();
+    const selectionRange = editorRef.current.getSelection() || null;
+    const selection = model && selectionRange ? model.getValueInRange(selectionRange) : "";
     const code = selection || editorRef.current.getValue();
 
     if (!code.trim()) {
@@ -133,7 +166,6 @@ function App() {
     }
 
     setIsLoading(true);
-    // Add a system message to chat indicating the action
     setMessages(prev => [...prev, {
       sender: 'System',
       text: `Running ${tool}...`,
@@ -141,19 +173,18 @@ function App() {
     }]);
 
     try {
-      const res = await fetch('http://localhost:8000/api/tool', {
+      const res = await fetch(`${API_BASE}/api/tool`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           tool,
           code,
-          gemini_key: geminiKey // Tools currently use Gemini
+          gemini_key: geminiKey
         })
       });
 
       if (!res.ok) {
-        const errorText = await res.text();
-        // Handle error directly instead of throwing
+        const errorText = await readErrorText(res);
         setMessages(prev => [...prev, {
           sender: 'System',
           text: `Error running tool ${tool}: ${errorText}`,
@@ -165,7 +196,7 @@ function App() {
       const data = await res.json();
       setMessages(prev => [...prev, {
         sender: 'AI Tool',
-        text: data.result,
+        text: typeof data?.result === 'string' ? data.result : JSON.stringify(data),
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
       }]);
     } catch (error: unknown) {
@@ -186,9 +217,8 @@ function App() {
     }
   };
 
-  const handleEditorDidMount: OnMount = (editor, monaco) => {
+  const handleEditorDidMount = (editor: MonacoEditor.editor.IStandaloneCodeEditor, monaco: typeof MonacoEditor) => {
     editorRef.current = editor;
-    // Add keybinding for save
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
       saveFile();
     });
@@ -216,7 +246,7 @@ function App() {
     setIsLoading(true);
 
     try {
-      const res = await fetch('http://localhost:8000/api/chat', {
+      const res = await fetch(`${API_BASE}/api/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -230,8 +260,7 @@ function App() {
       });
 
       if (!res.ok) {
-        const errorText = await res.text();
-        // Handle error directly instead of throwing
+        const errorText = await readErrorText(res);
         setMessages(prev => [...prev, {
           sender: 'System',
           text: `Error: ${errorText}`,
@@ -241,7 +270,7 @@ function App() {
       }
 
       const data = await res.json();
-      setMessages(prev => [...prev, data]);
+      setMessages(prev => [...prev, toMessage(data, selectedModel === 'deepseek' ? 'DeepSeek' : 'Gemini')]);
     } catch (error: unknown) {
       console.error("Failed to send message", error);
       let errorMessage = "An unknown error occurred.";
@@ -260,7 +289,6 @@ function App() {
     }
   };
 
-  // Helper to determine language from file extension
   const getLanguage = (filename: string) => {
     const ext = filename.split('.').pop();
     switch (ext) {
