@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import Editor from '@monaco-editor/react';
+import Editor, { loader } from '@monaco-editor/react';
 import * as MonacoEditor from 'monaco-editor';
 import './App.css';
 
@@ -29,6 +29,9 @@ self.MonacoEnvironment = {
   },
 };
 
+// Configure Monaco loader to use the local monaco-editor instance
+loader.config({ monaco: MonacoEditor });
+
 interface Message {
   sender: string;
   text: string;
@@ -45,7 +48,7 @@ type ChatApiResponse = Partial<Message> & Record<string, unknown>;
 
 const API_BASE =
   (import.meta as { env: Record<string, string | undefined> }).env?.VITE_API_BASE?.replace(/\/$/, '') ||
-  'http://localhost:8000';
+  '';
 
 async function readErrorText(res: Response): Promise<string> {
   try {
