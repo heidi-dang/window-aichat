@@ -24,6 +24,7 @@ from fastapi import (
     Depends,
     Request,
 )
+from fastapi.responses import RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -335,10 +336,9 @@ async def auth_callback(provider: str, code: str, db: Session = Depends(get_db))
         # Create JWT
         jwt_token = create_access_token(data={"sub": user.email})
         
-        # In a real app, redirect to frontend with token. 
-        # Here we return it JSON for simplicity or redirect to a frontend route that handles the token.
-        # return RedirectResponse(url=f"http://localhost:5173/login?token={jwt_token}")
-        return {"access_token": jwt_token, "token_type": "bearer", "user": email}
+        # Redirect to frontend with token
+        frontend_url = os.getenv("FRONTEND_URL", "http://localhost:5173")
+        return RedirectResponse(url=f"{frontend_url}/login?token={jwt_token}")
 
 @app.get("/api/processes")
 async def list_processes():
