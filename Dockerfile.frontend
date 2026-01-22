@@ -4,10 +4,13 @@ FROM node:20-alpine AS builder
 WORKDIR /app
 
 # Copy package files
+# Use .dockerignore to exclude node_modules and dist from the context
 COPY webapp/package*.json ./
 
 # Install dependencies
-RUN npm ci --no-audit --no-fund
+# Add --loglevel verbose for better debugging output
+# Use 'timeout' to prevent indefinite hangs (adjust time as needed, e.g., 10m for 10 minutes)
+RUN timeout 10m npm ci --no-audit --no-fund --loglevel verbose
 
 # Copy source code
 COPY webapp/ ./
