@@ -12,6 +12,15 @@ from datetime import datetime, timedelta
 import psutil
 import httpx
 from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, ForeignKey
+from sqlalchemy import (
+    create_engine,
+    Column,
+    Integer,
+    String,
+    Text,
+    DateTime,
+    ForeignKey,
+)
 from sqlalchemy.orm import sessionmaker, Session, relationship, declarative_base
 from jose import jwt, JWTError
 from fastapi import (
@@ -313,6 +322,17 @@ async def auth_callback(provider: str, code: str, db: Session = Depends(get_db))
             "grant_type": "authorization_code",
             "redirect_uri": f"http://localhost:8000/auth/callback/{provider}"
         }, headers={"Accept": "application/json"})
+        token_res = await client.post(
+            config["token_url"],
+            data={
+                "client_id": config["client_id"],
+                "client_secret": config["client_secret"],
+                "code": code,
+                "grant_type": "authorization_code",
+                "redirect_uri": f"http://localhost:8000/auth/callback/{provider}",
+            },
+            headers={"Accept": "application/json"},
+        )
 
         token_data = token_res.json()
         access_token = token_data.get("access_token")
@@ -333,6 +353,8 @@ async def auth_callback(provider: str, code: str, db: Session = Depends(get_db))
         if not email:
              # Fallback for GitHub if email is private
              email = f"{provider_id}@{provider}.placeholder.com"
+            # Fallback for GitHub if email is private
+            email = f"{provider_id}@{provider}.placeholder.com"
 
         # Save/Update User
         user = db.query(User).filter(User.email == email).first()
@@ -364,6 +386,11 @@ async def list_processes():
 
 @app.post("/api/chat")
 async def chat_endpoint(req: ChatRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+async def chat_endpoint(
+    req: ChatRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     try:
         # 1. Fetch Context (if repo provided)
         context = get_repo_context(req.repo_url, req.github_token)
@@ -392,6 +419,9 @@ async def chat_endpoint(req: ChatRequest, db: Session = Depends(get_db), current
             # Here we combine them textually.
             responses = client.ask_both(full_prompt)
             response_text = f"**Gemini:**\n{responses['gemini']}\n\n---\n\n**DeepSeek:**\n{responses['deepseek']}"
+            response_text = (
+                f"**Gemini:**\n{responses['gemini']}\n\n---\n\n**DeepSeek:**\n{responses['deepseek']}"
+            )
             sender = "Gemini & DeepSeek"
 
         # 5. Save to Database if user is logged in
@@ -402,6 +432,9 @@ async def chat_endpoint(req: ChatRequest, db: Session = Depends(get_db), current
 
             # Save AI Response
             ai_msg = ChatMessage(user_id=current_user.id, sender=sender, text=response_text)
+            ai_msg = ChatMessage(
+                user_id=current_user.id, sender=sender, text=response_text
+            )
             db.add(ai_msg)
 
             db.commit()
@@ -452,6 +485,9 @@ async def list_files(current_user: User = Depends(get_current_user)):
 
 @app.post("/api/fs/read")
 async def read_file(req: FileReadRequest, current_user: User = Depends(get_current_user)):
+async def read_file(
+    req: FileReadRequest, current_user: User = Depends(get_current_user)
+):
     base_dir = WORKSPACE_DIR
     if current_user:
         base_dir = os.path.join(WORKSPACE_DIR, str(current_user.id))
@@ -474,6 +510,9 @@ async def read_file(req: FileReadRequest, current_user: User = Depends(get_curre
 
 @app.post("/api/fs/write")
 async def write_file(req: FileWriteRequest, current_user: User = Depends(get_current_user)):
+async def write_file(
+    req: FileWriteRequest, current_user: User = Depends(get_current_user)
+):
     base_dir = WORKSPACE_DIR
     if current_user:
         base_dir = os.path.join(WORKSPACE_DIR, str(current_user.id))
@@ -503,6 +542,9 @@ async def run_tool(req: ToolRequest, current_user: User = Depends(get_current_us
 
 @app.post("/api/git/clone")
 async def clone_repo(req: CloneRequest, current_user: User = Depends(get_current_user)):
+async def clone_repo(
+    req: CloneRequest, current_user: User = Depends(get_current_user)
+):
     try:
         base_dir = WORKSPACE_DIR
         if current_user:
@@ -534,6 +576,11 @@ async def clone_repo(req: CloneRequest, current_user: User = Depends(get_current
 
 @app.post("/api/fs/upload")
 async def upload_file(file: UploadFile = File(...), db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+async def upload_file(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     try:
         base_dir = WORKSPACE_DIR
         if current_user:
@@ -574,6 +621,11 @@ async def upload_file(file: UploadFile = File(...), db: Session = Depends(get_db
 # --- Terminal Endpoint (WebSocket) ---
 @app.websocket("/ws/terminal")
 async def terminal_websocket(websocket: WebSocket, token: str = Query(...), db: Session = Depends(get_db)):
+async def terminal_websocket(
+    websocket: WebSocket,
+    token: str = Query(...),
+    db: Session = Depends(get_db),
+):
     user = get_user_from_token(token, db)
     if not user:
         await websocket.close(code=1008)
