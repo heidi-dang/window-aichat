@@ -6,15 +6,7 @@ import asyncio
 from typing import Optional
 from unittest.mock import MagicMock
 
-# --- 1. Headless Environment Setup ---
-# Mock tkinter modules to prevent ImportErrors when importing main.py on a server
-sys.modules["tkinter"] = MagicMock()
-sys.modules["tkinter.scrolledtext"] = MagicMock()
-sys.modules["tkinter.ttk"] = MagicMock()
-sys.modules["tkinter.messagebox"] = MagicMock()
-sys.modules["tkinter.filedialog"] = MagicMock()
-sys.modules["tkinter.simpledialog"] = MagicMock()
-
+import psutil
 from fastapi import FastAPI, HTTPException, Body, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -24,7 +16,7 @@ from pydantic import BaseModel
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 try:
-    from main import AIChatClient
+    from ai_core import AIChatClient
     from github_handler import GitHubHandler
 except ImportError as e:
     print(f"Error importing existing logic: {e}")
@@ -45,6 +37,9 @@ app.add_middleware(
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CACHE_DIR = os.path.join(BASE_DIR, "server_cache")
 os.makedirs(CACHE_DIR, exist_ok=True)
+# Workspace for Web App Files
+WORKSPACE_DIR = os.path.join(BASE_DIR, "workspace")
+os.makedirs(WORKSPACE_DIR, exist_ok=True)
 
 # --- 4. Data Models ---
 class ChatRequest(BaseModel):
@@ -59,6 +54,18 @@ class ChatResponse(BaseModel):
     sender: str
     text: str
     timestamp: str
+
+class FileReadRequest(BaseModel):
+    path: str
+
+class FileWriteRequest(BaseModel):
+    path: str
+    content: str
+
+class ToolRequest(BaseModel):
+    tool: str
+    code: str
+    gemini_key: Optional[str] = ""
 
 # --- 5. Helper Functions ---
 def get_ai_client(req: ChatRequest) -> AIChatClient:
@@ -93,10 +100,32 @@ def get_repo_context(repo_url: str, token: Optional[str]) -> str:
         return ""
     return context
 
+def get_tool_prompt(tool: str, code: str) -> str:
+    prompts = {
+        "analyze": f"Analyze this code for bugs, performance, and security:\n\n{code}",
+        "docs": f"Generate documentation for this code:\n\n{code}",
+        "refactor": f"Refactor this code to improve quality and readability:\n\n{code}",
+        "security": f"Check this code for security vulnerabilities:\n\n{code}",
+        "tests": f"Generate unit tests for this code:\n\n{code}",
+        "explain": f"Explain how this code works:\n\n{code}",
+        "optimize": f"Suggest optimizations for this code:\n\n{code}"
+    }
+    return prompts.get(tool, f"Analyze this code:\n\n{code}")
+
 # --- 6. API Endpoints ---
 @app.get("/")
 async def health_check():
     return {"status": "ok", "service": "AI Chat Backend"}
+
+@app.get("/api/processes")
+async def list_processes():
+    processes = []
+    for proc in psutil.process_iter(['pid', 'name', 'username', 'cpu_percent', 'memory_info']):
+        try:
+            processes.append(proc.info)
+        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+            pass
+    return processes
 
 @app.post("/api/chat")
 async def chat_endpoint(req: ChatRequest):
@@ -140,6 +169,65 @@ async def chat_endpoint(req: ChatRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/api/fs/list")
+async def list_files():
+    files = []
+    for root, dirs, filenames in os.walk(WORKSPACE_DIR):
+        rel_path = os.path.relpath(root, WORKSPACE_DIR)
+        if rel_path == ".": rel_path = ""
+        
+        for d in dirs:
+            files.append({
+                "name": d,
+                "type": "directory",
+                "path": os.path.join(rel_path, d).replace("\\", "/")
+            })
+        for f in filenames:
+            files.append({
+                "name": f,
+                "type": "file",
+                "path": os.path.join(rel_path, f).replace("\\", "/")
+            })
+    return files
+
+@app.post("/api/fs/read")
+async def read_file(req: FileReadRequest):
+    safe_path = os.path.normpath(os.path.join(WORKSPACE_DIR, req.path))
+    if not safe_path.startswith(WORKSPACE_DIR):
+        raise HTTPException(status_code=403, detail="Access denied")
+    
+    if not os.path.exists(safe_path):
+        raise HTTPException(status_code=404, detail="File not found")
+        
+    try:
+        with open(safe_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        return {"content": content}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/fs/write")
+async def write_file(req: FileWriteRequest):
+    safe_path = os.path.normpath(os.path.join(WORKSPACE_DIR, req.path))
+    if not safe_path.startswith(WORKSPACE_DIR):
+        raise HTTPException(status_code=403, detail="Access denied")
+        
+    try:
+        os.makedirs(os.path.dirname(safe_path), exist_ok=True)
+        with open(safe_path, "w", encoding="utf-8") as f:
+            f.write(req.content)
+        return {"status": "ok"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/tool")
+async def run_tool(req: ToolRequest):
+    # Create a temporary client using the key provided in request (or default)
+    client = get_ai_client(ChatRequest(message="", gemini_key=req.gemini_key))
+    prompt = get_tool_prompt(req.tool, req.code)
+    result = client.ask_gemini(prompt)
+    return {"result": result}
+
 # --- Terminal Endpoint (WebSocket) ---
 @app.websocket("/ws/terminal")
 async def terminal_websocket(websocket: WebSocket):
@@ -149,9 +237,52 @@ async def terminal_websocket(websocket: WebSocket):
     try:
         import pty
     except ImportError:
-        await websocket.send_text("Error: Backend terminal requires Linux/macOS (pty module missing).\r\n")
-        await websocket.close()
-        return
+        if os.name == 'nt':
+            # Windows Fallback using asyncio subprocess
+            try:
+                shell = os.environ.get("COMSPEC", "cmd.exe")
+                process = await asyncio.create_subprocess_shell(
+                    shell,
+                    stdin=asyncio.subprocess.PIPE,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
+                )
+
+                async def read_stream(stream):
+                    try:
+                        while True:
+                            data = await stream.read(1024)
+                            if not data: break
+                            try:
+                                text = data.decode('cp437')
+                            except:
+                                text = data.decode('utf-8', errors='ignore')
+                            await websocket.send_text(text)
+                    except:
+                        pass
+
+                asyncio.create_task(read_stream(process.stdout))
+                asyncio.create_task(read_stream(process.stderr))
+
+                try:
+                    while True:
+                        data = await websocket.receive_text()
+                        process.stdin.write(data.encode())
+                        await process.stdin.drain()
+                except WebSocketDisconnect:
+                    pass
+                finally:
+                    try: process.terminate()
+                    except: pass
+                return
+            except Exception as e:
+                await websocket.send_text(f"Error starting Windows terminal: {e}\r\n")
+                await websocket.close()
+                return
+        else:
+            await websocket.send_text("Error: Backend terminal requires Linux/macOS (pty module missing).\r\n")
+            await websocket.close()
+            return
 
     # Spawn Shell with TERM environment variable for colors
     master_fd, slave_fd = pty.openpty()

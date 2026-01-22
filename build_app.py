@@ -54,12 +54,17 @@ def build():
         '--clean',     # Clean PyInstaller cache
         '--noconfirm', # Overwrite output directory
         
-        # Explicitly import the local module
+        # Explicitly import local modules
         '--hidden-import', 'github_handler',
-        
+        '--hidden-import', 'ai_core',
+        '--hidden-import', 'ui.settings_window',
+        '--hidden-import', 'ui.dev_tool_window',
+        '--hidden-import', 'ui.code_chat_window',
+
         # Common hidden imports
         '--hidden-import', 'PIL',
         '--hidden-import', 'cryptography',
+        '--hidden-import', 'pygments',
     ]
 
     # 3. Add data files if they exist (source;dest)

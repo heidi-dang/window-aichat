@@ -1,9 +1,11 @@
 import os
 import sys
 import subprocess
+import shutil
 import time
 import threading
 import webbrowser
+import urllib.request
 
 # Configuration
 PROJECT_NAME = "window-aichat-web"
@@ -12,21 +14,73 @@ FRONTEND_PORT = 5173
 
 def install_backend_deps():
     print(">>> [1/4] Installing Backend Dependencies...")
+    # Check if pip is installed
+    try:
+        subprocess.run([sys.executable, "-m", "pip", "--version"], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except subprocess.CalledProcessError:
+        print("⚠️ pip not found. Attempting to install...")
+        try:
+            subprocess.check_call([sys.executable, "-m", "ensurepip", "--default-pip"])
+            subprocess.check_call([sys.executable, "-m", "pip", "install", "--upgrade", "pip"])
+            print("✅ pip installed via ensurepip.")
+        except subprocess.CalledProcessError:
+            print("⚠️ ensurepip failed. Downloading get-pip.py...")
+            try:
+                urllib.request.urlretrieve("https://bootstrap.pypa.io/get-pip.py", "get-pip.py")
+                subprocess.check_call([sys.executable, "get-pip.py"])
+                if os.path.exists("get-pip.py"): os.remove("get-pip.py")
+                print("✅ pip installed via get-pip.py.")
+            except Exception as e:
+                print(f"❌ Error: Could not install pip. {e}\nPlease install Python with pip enabled.")
+                sys.exit(1)
+
+    if not os.path.exists("requirements.txt"):
+        print("ℹ️ requirements.txt not found. Creating default...")
+        with open("requirements.txt", "w") as f:
+            f.write("fastapi\nuvicorn\npydantic\npython-multipart\naiofiles\npsutil\nrequests\ngoogle-generativeai\ncryptography\n")
+
     try:
         subprocess.check_call([sys.executable, "-m", "pip", "install", "-r", "requirements.txt"])
     except subprocess.CalledProcessError:
-        print("Error installing requirements. Ensure pip is in your PATH.")
+        print("Error installing requirements. Please check the requirements.txt file and your pip installation.")
         sys.exit(1)
 
 def setup_frontend():
     print(">>> [2/4] Setting up React Frontend...")
     
+    def check_node():
+        try:
+            subprocess.run(["node", "-v"], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return True
+        except (FileNotFoundError, subprocess.CalledProcessError):
+            return False
+
     # Check if node is installed
-    try:
-        subprocess.run(["node", "-v"], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    except (FileNotFoundError, subprocess.CalledProcessError):
-        print("Error: Node.js is not installed or not in PATH. Please install Node.js first.")
-        sys.exit(1)
+    if not check_node():
+        # Try standard path
+        program_files = os.environ.get("ProgramFiles", r"C:\Program Files")
+        node_path = os.path.join(program_files, "nodejs")
+        if os.path.exists(node_path):
+            os.environ["PATH"] += os.pathsep + node_path
+
+        if not check_node():
+            print("⚠️ Node.js not found. Attempting to install via winget...")
+            try:
+                # Check for winget
+                subprocess.run(["winget", "--version"], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                print("📦 Installing Node.js LTS (Accept prompts if any)...")
+                subprocess.check_call(["winget", "install", "-e", "--id", "OpenJS.NodeJS.LTS"])
+                
+                if os.path.exists(node_path):
+                    os.environ["PATH"] += os.pathsep + node_path
+                    print("✅ Node.js installed and added to PATH.")
+                else:
+                    print("✅ Node.js installed. Please restart the script to pick up the new PATH.")
+                    sys.exit(0) 
+            except (FileNotFoundError, subprocess.CalledProcessError):
+                print("❌ Error: Node.js is not installed and winget failed.")
+                print("Please install Node.js manually from https://nodejs.org/")
+                sys.exit(1)
 
     if not os.path.exists(PROJECT_NAME):
         print("Creating Vite project...")
@@ -52,6 +106,22 @@ def write_file(path, content):
     print(f"Generated: {path}")
 
 def generate_files():
+    # Clean up boilerplate files from default Vite template to prevent conflicts
+    print("Cleaning up default Vite boilerplate...")
+    files_to_remove = [
+        "src/App.css",
+        "src/App.jsx",
+        "src/assets/react.svg",
+    ]
+    for file_path in files_to_remove:
+        if os.path.exists(file_path):
+            os.remove(file_path)
+            print(f"Removed boilerplate: {file_path}")
+
+    if os.path.exists("src/assets"):
+        shutil.rmtree("src/assets", ignore_errors=True)
+        print("Removed boilerplate folder: src/assets")
+
     # 1. Tailwind Config
     write_file("tailwind.config.js", """/** @type {import('tailwindcss').Config} */
 export default {
@@ -78,6 +148,14 @@ export default {
   plugins: [],
 }""")
 
+    # 1.5 PostCSS Config
+    write_file("postcss.config.js", """export default {
+  plugins: {
+    tailwindcss: {},
+    autoprefixer: {},
+  },
+}""")
+
     # 2. CSS
     write_file("src/index.css", """@tailwind base;
 @tailwind components;
@@ -97,11 +175,31 @@ body {
 ::-webkit-scrollbar-thumb:hover { background: #555; }
 """)
 
+    # 2.5 Vite Config (Proxy for Local Dev)
+    write_file("vite.config.js", """import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+
+export default defineConfig({
+  plugins: [react()],
+  server: {
+    proxy: {
+      '/api': {
+        target: 'http://localhost:8000',
+        changeOrigin: true,
+      },
+      '/ws': {
+        target: 'ws://localhost:8000',
+        ws: true,
+      }
+    }
+  }
+})""")
+
     # 3. App.jsx
     write_file("src/App.jsx", """import React, { useState } from 'react';
 import Sidebar from './components/Sidebar';
 import FileExplorer from './components/FileExplorer';
-import EditorArea from './components/EditorArea';
+import EditorArea from './components/EditorArea'; 
 import TerminalPanel from './components/TerminalPanel';
 import axios from 'axios';
 
@@ -119,24 +217,24 @@ function App() {
     deepseekKey: ''
   });
 
-  const handleFileSelect = async (path) => {
+  const handleFileSelect = async (file) => {
     try {
-      const res = await axios.post('http://localhost:8000/api/fs/read', { path });
-      setActiveFile({ path, language: getLanguage(path) });
+      const res = await axios.post('/api/fs/read', { path: file.path });
+      setActiveFile({ ...file, language: getLanguage(file.path) });
       setFileContent(res.data.content);
     } catch (err) {
-      console.error("Error reading file", err);
+      alert("Error reading file: " + (err.response?.data?.detail || err.message));
     }
   };
 
   const handleSaveFile = async (content) => {
     if (!activeFile) return;
     try {
-      await axios.post('http://localhost:8000/api/fs/write', { path: activeFile.path, content });
+      await axios.post('/api/fs/write', { path: activeFile.path, content });
       setFileContent(content);
       alert("File Saved!");
     } catch (err) {
-      alert("Error saving file");
+      alert("Error saving file: " + (err.response?.data?.detail || err.message));
     }
   };
 
@@ -159,7 +257,7 @@ function App() {
     setMessages(prev => [...prev, newUserMsg]);
 
     try {
-      const res = await axios.post('http://localhost:8000/api/chat', {
+      const res = await axios.post('/api/chat', {
         message: text,
         model: config.model,
         repo_url: config.repoUrl,
@@ -253,8 +351,8 @@ const ToolsPanel = ({ activeCode, config }) => {
     if (!activeCode) { alert("Open a file first!"); return; }
     setLoading(true);
     try {
-      const res = await axios.post('http://localhost:8000/api/tool', { tool: toolName, code: activeCode, gemini_key: config.geminiKey });
-      setResult(res.data.result);
+      const res = await axios.post('/api/tool', { tool: toolName, code: activeCode, gemini_key: config.geminiKey });
+      setResult(typeof res.data.result === 'string' ? res.data.result : JSON.stringify(res.data.result, null, 2));
     } catch (err) { setResult("Error: " + err.message); }
     setLoading(false);
   };
@@ -295,13 +393,13 @@ import { Folder, FileCode, RefreshCw, Plus } from 'lucide-react';
 const FileExplorer = ({ onFileSelect }) => {
   const [files, setFiles] = useState([]);
   const fetchFiles = async () => {
-    try { const res = await axios.get('http://localhost:8000/api/fs/list'); setFiles(res.data); } catch (err) { console.error(err); }
+    try { const res = await axios.get('/api/fs/list'); setFiles(res.data); } catch (err) { console.error(err); }
   };
-  useEffect(() => { fetchFiles(); }, []);
+  useEffect(() => { fetchFiles(); const interval = setInterval(fetchFiles, 5000); return () => clearInterval(interval); }, []);
   const createFile = async () => {
     const name = prompt("Enter file name (e.g., test.py):");
     if (!name) return;
-    try { await axios.post('http://localhost:8000/api/fs/write', { path: name, content: "" }); fetchFiles(); } catch (err) { alert("Error creating file"); }
+    try { await axios.post('/api/fs/write', { path: name, content: "" }); fetchFiles(); } catch (err) { alert("Error creating file"); }
   };
   return (
     <div className="flex flex-col h-full bg-sidebar">
@@ -314,7 +412,7 @@ const FileExplorer = ({ onFileSelect }) => {
       </div>
       <div className="flex-1 overflow-y-auto p-2">
         {files.map((file) => (
-          <div key={file.path} onClick={() => file.type === 'file' && onFileSelect(file.path)} className="flex items-center gap-2 p-2 hover:bg-input rounded cursor-pointer text-sm text-text_primary">
+          <div key={file.path} onClick={() => file.type === 'file' && onFileSelect(file)} className="flex items-center gap-2 p-2 hover:bg-input rounded cursor-pointer text-sm text-text_primary">
             {file.type === 'directory' ? <Folder size={16} className="text-accent" /> : <FileCode size={16} className="text-blue-400" />}
             <span className="truncate">{file.name}</span>
           </div>
@@ -368,7 +466,8 @@ const TerminalPanel = ({ isOpen, onToggle }) => {
     xtermRef.current = term;
     fitAddonRef.current = fitAddon;
 
-    const ws = new WebSocket('ws://localhost:8000/ws/terminal');
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const ws = new WebSocket(`${protocol}//${window.location.host}/ws/terminal`);
     ws.onmessage = (event) => term.write(event.data);
     term.onData((data) => ws.send(data));
 
@@ -460,6 +559,14 @@ def run_servers():
         frontend_process.terminate()
 
 if __name__ == "__main__":
+    # Ensure we are in the project root
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    # Check if backend.py is in script_dir (root) or parent (if script is in scripts/)
+    if os.path.exists(os.path.join(script_dir, "backend.py")):
+        os.chdir(script_dir)
+    elif os.path.exists(os.path.join(script_dir, "..", "backend.py")):
+        os.chdir(os.path.join(script_dir, ".."))
+
     install_backend_deps()
     setup_frontend()
     run_servers()

@@ -8,3 +8,5 @@ pydantic
 python-multipart
 aiofiles
 pyinstaller
+psutil
+pygments

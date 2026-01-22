@@ -103,6 +103,28 @@ body {
 }
 EOF
 
+# --- Vite Config (Proxy) ---
+cat <<EOF > vite.config.js
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+
+export default defineConfig({
+  plugins: [react()],
+  server: {
+    proxy: {
+      '/api': {
+        target: 'http://localhost:8000',
+        changeOrigin: true,
+      },
+      '/ws': {
+        target: 'ws://localhost:8000',
+        ws: true,
+      }
+    }
+  }
+})
+EOF
+
 # --- Main App Component ---
 cat <<EOF > src/App.jsx
 import React, { useState, useRef, useEffect } from 'react';
@@ -130,7 +152,7 @@ function App() {
   // --- File System Operations ---
   const handleFileSelect = async (path) => {
     try {
-      const res = await axios.post('http://localhost:8000/api/fs/read', { path });
+      const res = await axios.post('/api/fs/read', { path });
       setActiveFile({ path, language: getLanguage(path) });
       setFileContent(res.data.content);
     } catch (err) {
@@ -141,7 +163,7 @@ function App() {
   const handleSaveFile = async (content) => {
     if (!activeFile) return;
     try {
-      await axios.post('http://localhost:8000/api/fs/write', { path: activeFile.path, content });
+      await axios.post('/api/fs/write', { path: activeFile.path, content });
       setFileContent(content);
       alert("File Saved!");
     } catch (err) {
@@ -170,7 +192,7 @@ function App() {
     setMessages(prev => [...prev, newUserMsg]);
 
     try {
-      const res = await axios.post('http://localhost:8000/api/chat', {
+      const res = await axios.post('/api/chat', {
         message: text,
         model: config.model,
         repo_url: config.repoUrl,
@@ -305,7 +327,7 @@ const ToolsPanel = ({ activeCode, config }) => {
     }
     setLoading(true);
     try {
-      const res = await axios.post('http://localhost:8000/api/tool', {
+      const res = await axios.post('/api/tool', {
         tool: toolName,
         code: activeCode,
         gemini_key: config.geminiKey
@@ -376,7 +398,7 @@ const FileExplorer = ({ onFileSelect }) => {
 
   const fetchFiles = async () => {
     try {
-      const res = await axios.get('http://localhost:8000/api/fs/list');
+      const res = await axios.get('/api/fs/list');
       setFiles(res.data);
     } catch (err) {
       console.error(err);
@@ -389,7 +411,7 @@ const FileExplorer = ({ onFileSelect }) => {
     const name = prompt("Enter file name (e.g., test.py):");
     if (!name) return;
     try {
-      await axios.post('http://localhost:8000/api/fs/write', { path: name, content: "" });
+      await axios.post('/api/fs/write', { path: name, content: "" });
       fetchFiles();
     } catch (err) { alert("Error creating file"); }
   };
@@ -531,8 +553,9 @@ const TerminalPanel = ({ isOpen, onToggle }) => {
     xtermRef.current = term;
     fitAddonRef.current = fitAddon;
 
-    // Connect WebSocket
-    const ws = new WebSocket('ws://localhost:8000/ws/terminal');
+    // Connect WebSocket (Dynamic Protocol/Host)
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const ws = new WebSocket(\`\${protocol}//\${window.location.host}/ws/terminal\`);
     ws.onmessage = (event) => term.write(event.data);
     term.onData((data) => ws.send(data));
     wsRef.current = ws;

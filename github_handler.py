@@ -17,35 +17,78 @@ class GitHubHandler:
         if self.token:
             self.headers["Authorization"] = f"token {self.token}"
 
-    def fetch_repo_context(self, repo_url: str) -> str:
-        """Fetch and cache GitHub repository context (full codebase)"""
+    def fetch_repo_structure(self, repo_url: str) -> Dict[str, Any]:
+        """Fetch repository structure (file tree) only"""
         if not self._validate_github_url(repo_url):
-            return "Error: Invalid GitHub URL format"
+            return {"error": "Invalid GitHub URL format"}
 
         owner, repo_name = self._extract_owner_repo(repo_url)
         if not owner or not repo_name:
-             return "Error: Could not extract owner and repo name"
-
-        # Use a cache file specific to this repo
-        cache_file = os.path.join(self.cache_dir, f"{owner}_{repo_name}_full_context.json")
-        
-        # Check cache (valid for 24 hours)
-        if os.path.exists(cache_file):
-            try:
-                with open(cache_file, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                    timestamp = datetime.fromisoformat(data.get('timestamp'))
-                    if datetime.now() - timestamp < timedelta(hours=24):
-                        return data.get('context', '')
-            except Exception:
-                pass
+             return {"error": "Could not extract owner and repo name"}
 
         try:
-            context = self.load_codebase_to_memory(owner, repo_name)
-            self._save_to_cache(cache_file, context)
-            return context
+            repo_info = self.get_repo_info(owner, repo_name)
+            default_branch = repo_info.get('default_branch', 'main')
+            tree_data = self.get_directory_tree(owner, repo_name, default_branch)
+
+            return {
+                "owner": owner,
+                "repo": repo_name,
+                "branch": default_branch,
+                "tree": tree_data.get('tree', []),
+                "info": repo_info
+            }
         except Exception as e:
-            return f"Error fetching repository: {str(e)}"
+            return {"error": f"Error fetching repository structure: {str(e)}"}
+
+    def fetch_file_content(self, owner: str, repo: str, path: str, branch: str = "main") -> str:
+        """Fetch content of a single file"""
+        try:
+            url = f"https://api.github.com/repos/{owner}/{repo}/contents/{path}?ref={branch}"
+            data = self._api_request(url)
+            if data.get('encoding') == 'base64':
+                return base64.b64decode(data['content']).decode('utf-8', errors='replace')
+            else:
+                return "Error: Unknown encoding or file too large"
+        except Exception as e:
+            return f"Error fetching file: {str(e)}"
+
+    def fetch_repo_context(self, repo_url: str) -> str:
+        """Legacy method: Fetch and cache GitHub repository context (full codebase) - kept for compatibility but optimized"""
+        # This method is now a wrapper that fetches a limited set of files to avoid overwhelming the context
+        structure = self.fetch_repo_structure(repo_url)
+        if "error" in structure:
+            return structure["error"]
+
+        owner = structure["owner"]
+        repo = structure["repo"]
+        branch = structure["branch"]
+        tree = structure["tree"]
+
+        # Filter for interesting files
+        allowed_extensions = {'.py', '.js', '.ts', '.html', '.css', '.java', '.cpp', '.c', '.h', '.md', '.txt', '.json', '.yml', '.yaml', '.sql', '.rs', '.go'}
+        files_to_fetch = [item['path'] for item in tree if item['type'] == 'blob' and os.path.splitext(item['path'])[1].lower() in allowed_extensions]
+
+        # Limit to top 10 files for the "auto-context" feature to be safe
+        files_to_fetch = files_to_fetch[:10]
+
+        context = []
+        context.append(f"REPOSITORY: {owner}/{repo}")
+        context.append(f"Description: {structure['info'].get('description', 'N/A')}")
+        context.append("=" * 50)
+        context.append("FILE TREE:")
+        for item in tree:
+             context.append(f"- {item['path']}")
+        context.append("=" * 50)
+
+        for path in files_to_fetch:
+            context.append(f"FILE: {path}")
+            context.append("-" * 20)
+            content = self.fetch_file_content(owner, repo, path, branch)
+            context.append(content)
+            context.append("=" * 50)
+
+        return "\n".join(context)
 
     def _validate_github_url(self, url: str) -> bool:
         try:
@@ -76,95 +119,3 @@ class GitHubHandler:
     def get_directory_tree(self, owner: str, repo: str, branch: str = "main") -> Dict[str, Any]:
         url = f"https://api.github.com/repos/{owner}/{repo}/git/trees/{branch}?recursive=1"
         return self._api_request(url)
-
-    def load_codebase_to_memory(self, owner: str, repo: str, branch: str = None) -> str:
-        """Load entire codebase structure and content into a string"""
-        # Get default branch if not specified
-        repo_info = self.get_repo_info(owner, repo)
-        if not branch:
-            branch = repo_info.get('default_branch', 'main')
-
-        tree_data = self.get_directory_tree(owner, repo, branch)
-        
-        allowed_extensions = {'.py', '.js', '.ts', '.html', '.css', '.java', '.cpp', '.c', '.h', '.md', '.txt', '.json', '.yml', '.yaml', '.sql', '.rs', '.go'}
-        
-        files_to_fetch = []
-        structure = []
-        
-        for item in tree_data.get('tree', []):
-            path = item['path']
-            structure.append(path)
-            if item['type'] == 'blob':
-                ext = os.path.splitext(path)[1].lower()
-                if ext in allowed_extensions:
-                    files_to_fetch.append(item)
-
-        # Limit to prevent context overflow (fetch top 40 relevant files)
-        files_to_fetch = files_to_fetch[:40] 
-
-        memory = []
-        memory.append("=" * 80)
-        memory.append(f"REPOSITORY: {owner}/{repo}")
-        memory.append(f"Description: {repo_info.get('description', 'N/A')}")
-        memory.append(f"Language: {repo_info.get('language', 'N/A')}")
-        memory.append(f"Stars: {repo_info.get('stargazers_count', 0)}")
-        memory.append(f"Last Updated: {repo_info.get('updated_at', 'N/A')}")
-        memory.append("=" * 80)
-        memory.append("")
-        
-        memory.append("DIRECTORY STRUCTURE:")
-        memory.append("\n".join(structure[:100]))
-        if len(structure) > 100:
-            memory.append(f"... and {len(structure) - 100} more files.")
-        memory.append("")
-        memory.append("=" * 80)
-        memory.append("")
-
-        for file_item in files_to_fetch:
-            path = file_item['path']
-            url = file_item['url']
-            
-            memory.append(f"FILE: {path}")
-            memory.append("-" * 40)
-            
-            try:
-                blob_data = self._api_request(url)
-                content = ""
-                if blob_data.get('encoding') == 'base64':
-                    content = base64.b64decode(blob_data['content']).decode('utf-8', errors='replace')
-                else:
-                    content = "Error: Unknown encoding"
-                memory.append(content)
-            except Exception as e:
-                memory.append(f"Error loading file content: {e}")
-            
-            memory.append("\n" + "=" * 80 + "\n")
-
-        return "\n".join(memory)
-
-    def get_specific_files(self, owner: str, repo: str, file_paths: List[str], branch: str = None) -> Dict[str, str]:
-        """Fetch content for specific files"""
-        repo_info = self.get_repo_info(owner, repo)
-        if not branch:
-            branch = repo_info.get('default_branch', 'main')
-            
-        results = {}
-        for path in file_paths:
-            try:
-                url = f"https://api.github.com/repos/{owner}/{repo}/contents/{path}?ref={branch}"
-                data = self._api_request(url)
-                if data.get('encoding') == 'base64':
-                    content = base64.b64decode(data['content']).decode('utf-8')
-                    results[path] = content
-                else:
-                    results[path] = "Error: Not base64 encoded"
-            except Exception as e:
-                results[path] = f"Error: {str(e)}"
-        return results
-
-    def _save_to_cache(self, cache_file: str, context: str):
-        with open(cache_file, 'w', encoding='utf-8') as f:
-            json.dump({
-                'context': context,
-                'timestamp': datetime.now().isoformat()
-            }, f, indent=2)
