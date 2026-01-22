@@ -67,6 +67,7 @@ function App() {
   // Panel Visibility State
   const [showSidebar, setShowSidebar] = useState(true);
   const [showChat, setShowChat] = useState(true);
+  const [activeMobilePanel, setActiveMobilePanel] = useState('editor');
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -112,6 +113,7 @@ function App() {
         const data = await res.json();
         setFileContent(data.content);
         setActiveFile(path);
+        setActiveMobilePanel('editor'); // Switch to editor on file open
       } else {
         const errorText = await readErrorText(res);
         alert(`Failed to read file: ${errorText}`);
@@ -466,86 +468,84 @@ function App() {
       </div>
 
       {/* Sidebar */}
-      {showSidebar && (
-        <div className="sidebar" style={{ width: sidebarWidth }} ref={sidebarRef}>
-          <div className="sidebar-header">
-            <h2>AI IDE</h2>
-          </div>
-          
-          <div className="sidebar-section">
-            <button onClick={() => setShowSettings(!showSettings)}>
-              ⚙ Settings
-            </button>
-          </div>
-
-          {showSettings && (
-            <div className="settings-panel">
-              <h3>Configuration</h3>
-              <input 
-                type="password" 
-                placeholder="Gemini API Key"
-                value={geminiKey}
-                onChange={(e) => setGeminiKey(e.target.value)}
-              />
-              <input 
-                type="password" 
-                placeholder="DeepSeek API Key"
-                value={deepseekKey}
-                onChange={(e) => setDeepseekKey(e.target.value)}
-              />
-              <input 
-                type="password" 
-                placeholder="GitHub Token"
-                value={githubToken}
-                onChange={(e) => setGithubToken(e.target.value)}
-              />
-              <input 
-                type="text" 
-                placeholder="GitHub Repo URL"
-                value={repoUrl}
-                onChange={(e) => setRepoUrl(e.target.value)}
-              />
-              <button className="save-btn" onClick={saveSettings}>Save</button>
-            </div>
-          )}
-
-          <div className="sidebar-section">
-            <button onClick={cloneRepo} disabled={isLoading || !repoUrl}>
-              {isLoading ? 'Cloning...' : 'Clone GitHub Repo'}
-            </button>
-            <input 
-              type="file" 
-              id="upload-zip" 
-              style={{ display: 'none' }} 
-              onChange={uploadFile} 
-              disabled={isLoading}
-            />
-            <button onClick={() => document.getElementById('upload-zip')?.click()} disabled={isLoading}>
-              Upload Zip/File
-            </button>
-          </div>
-
-          <div className="file-explorer">
-            <h3>Workspace</h3>
-            <button className="refresh-btn" onClick={fetchFiles}>↻ Refresh</button>
-            <ul>
-              {files.map((file, idx) => (
-                <li 
-                  key={idx} 
-                  className={`${file.type} ${activeFile === file.path ? 'active' : ''}`}
-                  onClick={() => file.type === 'file' && openFile(file.path)}
-                >
-                  {file.type === 'directory' ? '📁' : '📄'} {file.name}
-                </li>
-              ))}
-            </ul>
-          </div>
-          <div className="resizer-handle" onMouseDown={startResizeSidebar}></div>
+      <div className={`sidebar ${activeMobilePanel === 'sidebar' ? 'visible' : ''}`} style={{ width: sidebarWidth }} ref={sidebarRef}>
+        <div className="sidebar-header">
+          <h2>AI IDE</h2>
         </div>
-      )}
+        
+        <div className="sidebar-section">
+          <button onClick={() => setShowSettings(!showSettings)}>
+            ⚙ Settings
+          </button>
+        </div>
+
+        {showSettings && (
+          <div className="settings-panel">
+            <h3>Configuration</h3>
+            <input 
+              type="password" 
+              placeholder="Gemini API Key"
+              value={geminiKey}
+              onChange={(e) => setGeminiKey(e.target.value)}
+            />
+            <input 
+              type="password" 
+              placeholder="DeepSeek API Key"
+              value={deepseekKey}
+              onChange={(e) => setDeepseekKey(e.target.value)}
+            />
+            <input 
+              type="password" 
+              placeholder="GitHub Token"
+              value={githubToken}
+              onChange={(e) => setGithubToken(e.target.value)}
+            />
+            <input 
+              type="text" 
+              placeholder="GitHub Repo URL"
+              value={repoUrl}
+              onChange={(e) => setRepoUrl(e.target.value)}
+            />
+            <button className="save-btn" onClick={saveSettings}>Save</button>
+          </div>
+        )}
+
+        <div className="sidebar-section">
+          <button onClick={cloneRepo} disabled={isLoading || !repoUrl}>
+            {isLoading ? 'Cloning...' : 'Clone GitHub Repo'}
+          </button>
+          <input 
+            type="file" 
+            id="upload-zip" 
+            style={{ display: 'none' }} 
+            onChange={uploadFile} 
+            disabled={isLoading}
+          />
+          <button onClick={() => document.getElementById('upload-zip')?.click()} disabled={isLoading}>
+            Upload Zip/File
+          </button>
+        </div>
+
+        <div className="file-explorer">
+          <h3>Workspace</h3>
+          <button className="refresh-btn" onClick={fetchFiles}>↻ Refresh</button>
+          <ul>
+            {files.map((file, idx) => (
+              <li 
+                key={idx} 
+                className={`${file.type} ${activeFile === file.path ? 'active' : ''}`}
+                onClick={() => file.type === 'file' && openFile(file.path)}
+              >
+                {file.type === 'directory' ? '📁' : '📄'} {file.name}
+              </li>
+            ))}
+          </ul>
+        </div>
+        <div className="resizer-handle" onMouseDown={startResizeSidebar}></div>
+      </div>
 
       {/* Editor Area */}
-      <div className="editor-area">
+      <div className={`editor-area ${activeMobilePanel === 'editor' ? 'visible' : ''}`}>
         <div className="editor-header">
           <span className="file-name">{activeFile || 'No file selected'}</span>
           <div className="editor-actions">
@@ -577,50 +577,70 @@ function App() {
       </div>
 
       {/* Chat Area */}
-      {showChat && (
-        <div className="chat-area" style={{ width: chatWidth }} ref={chatRef}>
-          <div className="chat-header">
-            <h3>AI Assistant</h3>
-            <select value={selectedModel} onChange={(e) => setSelectedModel(e.target.value)}>
-              <option value="gemini">Gemini</option>
-              <option value="deepseek">DeepSeek</option>
-            </select>
-          </div>
-          <div className="messages-list">
-            {messages.map((msg, index) => (
-              <div key={index} className={`message ${msg.sender === 'You' ? 'user' : 'ai'}`}>
-                <div className="message-header">
-                  <span className="sender">{msg.sender}</span>
-                  <span className="time">{msg.timestamp}</span>
-                </div>
-                <div className="message-content">
-                  {msg.text}
-                </div>
-              </div>
-            ))}
-            {isLoading && <div className="message ai"><div className="message-content">Thinking...</div></div>}
-            <div ref={messagesEndRef} />
-          </div>
-
-          <div className="input-area">
-            <textarea
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                  e.preventDefault();
-                  sendMessage();
-                }
-              }}
-              placeholder="Ask AI..."
-            />
-            <button onClick={sendMessage} disabled={isLoading}>
-              ➤
-            </button>
-          </div>
-          <div className="resizer-handle" onMouseDown={startResizeChat}></div>
+      <div className={`chat-area ${activeMobilePanel === 'chat' ? 'visible' : ''}`} style={{ width: chatWidth }} ref={chatRef}>
+        <div className="chat-header">
+          <h3>AI Assistant</h3>
+          <select value={selectedModel} onChange={(e) => setSelectedModel(e.target.value)}>
+            <option value="gemini">Gemini</option>
+            <option value="deepseek">DeepSeek</option>
+          </select>
         </div>
-      )}
+        <div className="messages-list">
+          {messages.map((msg, index) => (
+            <div key={index} className={`message ${msg.sender === 'You' ? 'user' : 'ai'}`}>
+              <div className="message-header">
+                <span className="sender">{msg.sender}</span>
+                <span className="time">{msg.timestamp}</span>
+              </div>
+              <div className="message-content">
+                {msg.text}
+              </div>
+            </div>
+          ))}
+          {isLoading && <div className="message ai"><div className="message-content">Thinking...</div></div>}
+          <div ref={messagesEndRef} />
+        </div>
+
+        <div className="input-area">
+          <textarea
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendMessage();
+              }
+            }}
+            placeholder="Ask AI..."
+          />
+          <button onClick={sendMessage} disabled={isLoading}>
+            ➤
+          </button>
+        </div>
+        <div className="resizer-handle" onMouseDown={startResizeChat}></div>
+      </div>
+
+      {/* Bottom Navigation for Mobile */}
+      <div className="bottom-nav">
+        <button 
+          className={activeMobilePanel === 'sidebar' ? 'active' : ''} 
+          onClick={() => setActiveMobilePanel('sidebar')}
+        >
+          Files
+        </button>
+        <button 
+          className={activeMobilePanel === 'editor' ? 'active' : ''} 
+          onClick={() => setActiveMobilePanel('editor')}
+        >
+          Editor
+        </button>
+        <button 
+          className={activeMobilePanel === 'chat' ? 'active' : ''} 
+          onClick={() => setActiveMobilePanel('chat')}
+        >
+          Chat
+        </button>
+      </div>
     </div>
   );
 }

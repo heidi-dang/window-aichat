@@ -24,6 +24,7 @@ from fastapi import (
     File,
     Depends,
     Request,
+    Query,
 )
 from fastapi.responses import RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -76,7 +77,7 @@ class User(Base):
     email = Column(String, unique=True, index=True)
     provider = Column(String)  # google, github, apple
     provider_id = Column(String, index=True)
-    created_at = Column(DateTime, default=datetime.now())
+    created_at = Column(DateTime, default=datetime.now)
 
     chats = relationship("ChatMessage", back_populates="user")
     files = relationship("FileRecord", back_populates="user")
@@ -87,7 +88,7 @@ class ChatMessage(Base):
     user_id = Column(Integer, ForeignKey("users.id"))
     sender = Column(String)
     text = Column(Text)
-    timestamp = Column(DateTime, default=datetime.now())
+    timestamp = Column(DateTime, default=datetime.now)
 
     user = relationship("User", back_populates="chats")
 
@@ -97,7 +98,7 @@ class FileRecord(Base):
     user_id = Column(Integer, ForeignKey("users.id"))
     filename = Column(String)
     file_path = Column(String)
-    uploaded_at = Column(DateTime, default=datetime.now())
+    uploaded_at = Column(DateTime, default=datetime.now)
 
     user = relationship("User", back_populates="files")
 
@@ -151,7 +152,7 @@ class ChatRequest(BaseModel):
     model: str = "both"
     repo_url: Optional[str] = ""
     gemini_key: Optional[str] = ""
-    deepseek_api_key: Optional[str] = ""
+    deepseek_key: Optional[str] = ""
     github_token: Optional[str] = ""
 
 
@@ -197,7 +198,7 @@ def get_ai_client(req: ChatRequest) -> AIChatClient:
     # Inject keys from request
     client.config = {
         "gemini_api_key": req.gemini_key,
-        "deepseek_api_key": req.deepseek_api_key,
+        "deepseek_api_key": req.deepseek_key,
         "gemini_model": "gemini-2.0-flash",  # Default
     }
 
@@ -239,18 +240,12 @@ def create_access_token(data: dict):
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
 
-
-async def get_current_user(request: Request, db: Session = Depends(get_db)):
+def get_user_from_token(token: str, db: Session):
     """
-    Extracts user from JWT in Authorization header.
-    Returns None if no token or invalid, allowing guest access if desired.
+    Decodes a JWT token and returns the corresponding user from the database.
+    Returns None if token is invalid or user not found.
     """
-    auth_header = request.headers.get("Authorization")
-    if not auth_header:
-        return None
-
     try:
-        token = auth_header.split(" ")[1]
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         email: str = payload.get("sub")
         if email is None:
@@ -261,12 +256,23 @@ async def get_current_user(request: Request, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == email).first()
     return user
 
+async def get_current_user(request: Request, db: Session = Depends(get_db)):
+    """
+    Extracts user from JWT in Authorization header.
+    Returns None if no token or invalid, allowing guest access if desired.
+    """
+    auth_header = request.headers.get("Authorization")
+    if not auth_header or not auth_header.startswith("Bearer "):
+        return None
+
+    token = auth_header.split(" ")[1]
+    return get_user_from_token(token, db)
+
 
 # --- 6. API Endpoints ---
 @app.get("/")
 async def health_check():
     return {"status": "ok", "service": "AI Chat Backend"}
-
 
 # --- Auth Endpoints ---
 @app.get("/auth/login/{provider}")
@@ -283,15 +289,13 @@ async def login(provider: str):
         "response_type": "code",
         "scope": config["scope"],
         "redirect_uri": f"http://localhost:8000/auth/callback/{provider}",
-        "access_type": "offline",
+        "access_type": "offline"
     }
 
     # Construct URL
     import urllib.parse
-
     url = f"{config['auth_url']}?{urllib.parse.urlencode(params)}"
     return {"url": url}
-
 
 @app.get("/auth/callback/{provider}")
 async def auth_callback(provider: str, code: str, db: Session = Depends(get_db)):
@@ -302,17 +306,13 @@ async def auth_callback(provider: str, code: str, db: Session = Depends(get_db))
 
     # Exchange code for token
     async with httpx.AsyncClient() as client:
-        token_res = await client.post(
-            config["token_url"],
-            data={
-                "client_id": config["client_id"],
-                "client_secret": config["client_secret"],
-                "code": code,
-                "grant_type": "authorization_code",
-                "redirect_uri": f"http://localhost:8000/auth/callback/{provider}",
-            },
-            headers={"Accept": "application/json"},
-        )
+        token_res = await client.post(config["token_url"], data={
+            "client_id": config["client_id"],
+            "client_secret": config["client_secret"],
+            "code": code,
+            "grant_type": "authorization_code",
+            "redirect_uri": f"http://localhost:8000/auth/callback/{provider}"
+        }, headers={"Accept": "application/json"})
 
         token_data = token_res.json()
         access_token = token_data.get("access_token")
@@ -321,10 +321,9 @@ async def auth_callback(provider: str, code: str, db: Session = Depends(get_db))
             raise HTTPException(status_code=400, detail="Failed to retrieve access token")
 
         # Get User Info
-        user_info_res = await client.get(
-            config["user_info_url"],
-            headers={"Authorization": f"Bearer {access_token}"},
-        )
+        user_info_res = await client.get(config["user_info_url"], headers={
+            "Authorization": f"Bearer {access_token}"
+        })
         user_data = user_info_res.json()
 
         # Normalize email/id based on provider
@@ -332,8 +331,8 @@ async def auth_callback(provider: str, code: str, db: Session = Depends(get_db))
         provider_id = str(user_data.get("id") or user_data.get("sub"))
 
         if not email:
-            # Fallback for GitHub if email is private
-            email = f"{provider_id}@{provider}.placeholder.com"
+             # Fallback for GitHub if email is private
+             email = f"{provider_id}@{provider}.placeholder.com"
 
         # Save/Update User
         user = db.query(User).filter(User.email == email).first()
@@ -349,7 +348,6 @@ async def auth_callback(provider: str, code: str, db: Session = Depends(get_db))
         # Redirect to frontend with token
         frontend_url = os.getenv("FRONTEND_URL", "http://localhost:5173")
         return RedirectResponse(url=f"{frontend_url}/login?token={jwt_token}")
-
 
 @app.get("/api/processes")
 async def list_processes():
@@ -575,7 +573,12 @@ async def upload_file(file: UploadFile = File(...), db: Session = Depends(get_db
 
 # --- Terminal Endpoint (WebSocket) ---
 @app.websocket("/ws/terminal")
-async def terminal_websocket(websocket: WebSocket):
+async def terminal_websocket(websocket: WebSocket, token: str = Query(...), db: Session = Depends(get_db)):
+    user = get_user_from_token(token, db)
+    if not user:
+        await websocket.close(code=1008)
+        return
+
     await websocket.accept()
 
     # Check for PTY support (Linux/macOS only)
