@@ -4,6 +4,9 @@ import requests
 import base64
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any
+import logging
+
+logger = logging.getLogger('github_handler')
 
 class GitHubHandler:
     def __init__(self, cache_dir: str, token: Optional[str] = None):
@@ -11,11 +14,67 @@ class GitHubHandler:
         os.makedirs(cache_dir, exist_ok=True)
         self.session = requests.Session()
         self.token = token or os.getenv("GITHUB_TOKEN")
+        self.token_valid = False
+        self.token_error = None
         self.headers = {
             "Accept": "application/vnd.github.v3+json"
         }
         if self.token:
             self.headers["Authorization"] = f"token {self.token}"
+            # Validate token on initialization
+            self._validate_token()
+        else:
+            logger.warning("GitHub token not provided. Some features may be limited.")
+    
+    def _validate_token(self) -> bool:
+        """Validate the GitHub token by making a test API call."""
+        if not self.token:
+            self.token_valid = False
+            self.token_error = "No token provided"
+            return False
+        
+        try:
+            # Test token by getting authenticated user info
+            response = self.session.get(
+                "https://api.github.com/user",
+                headers=self.headers,
+                timeout=5
+            )
+            
+            if response.status_code == 200:
+                self.token_valid = True
+                self.token_error = None
+                user_data = response.json()
+                logger.info(f"GitHub token validated for user: {user_data.get('login', 'unknown')}")
+                return True
+            elif response.status_code == 401:
+                self.token_valid = False
+                self.token_error = "Invalid or revoked token"
+                logger.error("GitHub token is invalid or has been revoked")
+                return False
+            else:
+                self.token_valid = False
+                self.token_error = f"Token validation failed: HTTP {response.status_code}"
+                logger.warning(f"GitHub token validation failed: {response.status_code}")
+                return False
+        except requests.exceptions.RequestException as e:
+            self.token_valid = False
+            self.token_error = f"Network error: {str(e)}"
+            logger.warning(f"Could not validate GitHub token: {e}")
+            # Don't fail completely on network errors - token might still be valid
+            return False
+    
+    def update_token(self, new_token: Optional[str]):
+        """Update the GitHub token and revalidate."""
+        self.token = new_token
+        if self.token:
+            self.headers["Authorization"] = f"token {self.token}"
+            self._validate_token()
+        else:
+            self.token_valid = False
+            self.token_error = "No token provided"
+            if "Authorization" in self.headers:
+                del self.headers["Authorization"]
 
     def fetch_repo_structure(self, repo_url: str) -> Dict[str, Any]:
         """Fetch repository structure (file tree) only"""
@@ -108,9 +167,36 @@ class GitHubHandler:
         return None, None
 
     def _api_request(self, url: str) -> Any:
-        response = self.session.get(url, headers=self.headers, timeout=10)
-        response.raise_for_status()
-        return response.json()
+        """Make an API request with proper error handling for token issues."""
+        try:
+            response = self.session.get(url, headers=self.headers, timeout=10)
+            
+            # Handle token revocation
+            if response.status_code == 401:
+                self.token_valid = False
+                self.token_error = "Token revoked or invalid"
+                logger.error("GitHub API returned 401 - token may be revoked")
+                raise requests.exceptions.HTTPError(
+                    f"401 Client Error: Token authentication failed. "
+                    f"Please update your GitHub token in Settings."
+                )
+            
+            # Handle rate limiting
+            if response.status_code == 403:
+                rate_limit_remaining = response.headers.get('X-RateLimit-Remaining', '0')
+                if rate_limit_remaining == '0':
+                    reset_time = response.headers.get('X-RateLimit-Reset', '0')
+                    logger.warning(f"GitHub API rate limit exceeded. Reset at: {reset_time}")
+                    raise requests.exceptions.HTTPError(
+                        f"403 Client Error: Rate limit exceeded. "
+                        f"Please wait before making more requests."
+                    )
+            
+            response.raise_for_status()
+            return response.json()
+        except requests.exceptions.RequestException as e:
+            logger.error(f"GitHub API request failed: {e}")
+            raise
 
     def get_repo_info(self, owner: str, repo: str) -> Dict[str, Any]:
         url = f"https://api.github.com/repos/{owner}/{repo}"

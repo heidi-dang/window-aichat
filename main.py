@@ -16,14 +16,22 @@ from datetime import datetime
 from typing import Optional, Dict, List
 import difflib
 import queue
+import logging
 from github_handler import GitHubHandler
 from cryptography.fernet import Fernet
 import os
 import shutil
-from ai_core import AIChatClient, SecureConfig
+from ai_core import AIChatClient, SecureConfig, setup_logging
 from ui.settings_window import SettingsWindow
 from ui.dev_tool_window import DevToolWindow
 from ui.code_chat_window import CodeChatWindow
+from ui.theme_manager import ThemeManager
+from ui.ai_provider import ProviderFactory
+from ui.markdown_renderer import MarkdownRenderer
+
+# Setup logging at module level
+setup_logging()
+logger = logging.getLogger('main')
 
 class ChatApp:
     def __init__(self, root):
@@ -33,8 +41,9 @@ class ChatApp:
 
         try:
             self.root.iconbitmap(default='icon.ico')
-        except Exception:
-            pass
+        except (tk.TclError, FileNotFoundError) as e:
+            # Icon file missing or corrupted - not critical, continue without icon
+            logging.getLogger('main').debug(f"Could not load icon: {e}")
 
         self.config_dir = os.path.join(os.path.expanduser('~'), '.aichatdesktop')
         self.config_path = os.path.join(self.config_dir, 'config.json')
@@ -49,8 +58,9 @@ class ChatApp:
         self.repo_context = ""
 
         # Setup UI immediately
+        self.theme_manager = ThemeManager("Dark")
         self.setup_styles()
-        self.apply_dark_theme()
+        self.apply_theme()
         self.setup_ui()
         self.create_menu()
         
@@ -62,16 +72,35 @@ class ChatApp:
 
     def initialize_backend(self):
         """Load heavy modules in background"""
-        os.makedirs(self.repo_cache_dir, exist_ok=True)
-        self.chat_client = AIChatClient(self.config_path)
-        token = self.chat_client.config.get("github_token", "")
-        
-        from github_handler import GitHubHandler
-        self.gh_handler = GitHubHandler(self.repo_cache_dir, token=token)
-        
-        self.display_welcome()
-        self.process_queue()
-        self.update_status_indicators()
+        try:
+            logger.info("Initializing backend components...")
+            os.makedirs(self.repo_cache_dir, exist_ok=True)
+            
+            try:
+                self.chat_client = AIChatClient(self.config_path)
+                logger.info("AIChatClient initialized successfully")
+            except Exception as e:
+                logger.error(f"Failed to initialize AIChatClient: {e}", exc_info=True)
+                self.display_message("System", f"Error initializing AI client: {str(e)}\nPlease check your configuration in Settings.")
+                return
+            
+            token = self.chat_client.config.get("github_token", "")
+            
+            try:
+                from github_handler import GitHubHandler
+                self.gh_handler = GitHubHandler(self.repo_cache_dir, token=token)
+                logger.info("GitHubHandler initialized successfully")
+            except Exception as e:
+                logger.error(f"Failed to initialize GitHubHandler: {e}", exc_info=True)
+                self.display_message("System", f"Warning: GitHub integration unavailable: {str(e)}\nYou can still use the chat features.")
+                self.gh_handler = None
+            
+            self.display_welcome()
+            self.process_queue()
+            self.update_status_indicators()
+        except Exception as e:
+            logger.critical(f"Critical error during backend initialization: {e}", exc_info=True)
+            self.display_message("System", f"Critical error during initialization: {str(e)}\nPlease restart the application.")
 
     def create_menu(self):
         """Create application menu with developer tools"""
@@ -125,84 +154,37 @@ class ChatApp:
 
     def setup_styles(self):
         """Define Sendbird-inspired color palette and styles"""
-        self.colors = {
-            "bg": "#161616",          # Main window background
-            "sidebar": "#1E1E1E",     # Sidebar background
-            "chat_bg": "#000000",     # Chat area background
-            "input_bg": "#2C2C2C",    # Input field background
-            "fg": "#EEEEEE",          # Primary text
-            "fg_dim": "#9E9E9E",      # Secondary text
-            "accent": "#6210CC",      # Sendbird Purple
-            "accent_hover": "#7B2FDD",
-            "user_bubble": "#6210CC", # User message bubble
-            "ai_bubble": "#2C2C2C",   # AI message bubble
-            "border": "#333333"
-        }
+        # Use theme manager for colors
+        self.colors = self.theme_manager.colors
 
-    def apply_dark_theme(self):
+    def apply_theme(self):
+        """Apply the current theme using ThemeManager."""
+        self.colors = self.theme_manager.colors
         self.root.configure(bg=self.colors["bg"])
         style = ttk.Style()
-        try:
-            style.theme_use('clam')
-        except:
-            pass
-            
-        # Configure TTK styles
-        style.configure("TFrame", background=self.colors["bg"])
-        style.configure("Sidebar.TFrame", background=self.colors["sidebar"])
-        
-        style.configure("TLabel", background=self.colors["bg"], foreground=self.colors["fg"], font=("Segoe UI", 10))
-        style.configure("Sidebar.TLabel", background=self.colors["sidebar"], foreground=self.colors["fg"])
-        style.configure("Header.TLabel", background=self.colors["sidebar"], foreground=self.colors["fg"], font=("Segoe UI", 12, "bold"))
-        
-        style.configure("TButton", 
-            background=self.colors["accent"], 
-            foreground="white", 
-            borderwidth=0, 
-            font=("Segoe UI", 9, "bold"),
-            padding=5
-        )
-        style.map("TButton", 
-            background=[("active", self.colors["accent_hover"])],
-            foreground=[("active", "white")]
-        )
-        
-        style.configure("Secondary.TButton",
-            background=self.colors["input_bg"],
-            foreground=self.colors["fg"],
-            borderwidth=0,
-            font=("Segoe UI", 9),
-            padding=5
-        )
-        style.map("Secondary.TButton",
-            background=[("active", "#3D3D3D")]
-        )
+        self.theme_manager.apply_ttk_styles(style)
 
-        style.configure("Treeview", 
-            background=self.colors["input_bg"], 
-            foreground=self.colors["fg"], 
-            fieldbackground=self.colors["input_bg"], 
-            borderwidth=0,
-            font=("Segoe UI", 9)
-        )
-        style.map("Treeview", background=[("selected", self.colors["accent"])])
-        
-        style.configure("TCombobox", 
-            fieldbackground=self.colors["input_bg"], 
-            background=self.colors["sidebar"], 
-            foreground=self.colors["fg"], 
-            arrowcolor=self.colors["fg"],
-            borderwidth=0
-        )
-        
-        style.configure("TPanedwindow", background=self.colors["bg"])
-        style.configure("Sash", background=self.colors["border"], sashthickness=2)
-        
-        style.configure("Horizontal.TProgressbar", background=self.colors["accent"], troughcolor=self.colors["input_bg"], borderwidth=0)
-
-    def open_dev_tool(self, title: str, input_label: str, action_callback):
-        """Generic function to open a developer tool window."""
-        DevToolWindow(self.root, title, input_label, action_callback)
+    def open_dev_tool(self, title: str, input_label: str, action_callback, provider_type: str = "auto"):
+        """Generic function to open a developer tool window with pluggable AI provider."""
+        # Create provider wrapper if chat_client is available
+        if self.chat_client:
+            provider = ProviderFactory.create_provider(provider_type, self.chat_client)
+            if provider and provider.is_available():
+                # Wrap the callback: action_callback generates the prompt, provider executes it
+                def provider_wrapper(input_content: str) -> str:
+                    prompt = action_callback(input_content)
+                    return provider.generate_response(prompt)
+                DevToolWindow(self.root, title, input_label, provider_wrapper)
+            else:
+                # Fallback to direct callback (uses Gemini directly)
+                logger.warning(f"Provider {provider_type} not available, using direct callback")
+                DevToolWindow(self.root, title, input_label, 
+                            lambda content: self.chat_client.ask_gemini(action_callback(content)) 
+                            if self.chat_client.gemini_available 
+                            else "No AI provider available")
+        else:
+            DevToolWindow(self.root, title, input_label, 
+                        lambda content: "AI client not initialized. Please wait for initialization to complete.")
 
     def tool_analyze_code(self): self.open_dev_tool("Analyze Code", "Code to Analyze", self.analyze_code)
     def tool_generate_docs(self): self.open_dev_tool("Generate Documentation", "Code to Document", self.generate_documentation)
@@ -262,10 +244,10 @@ class ChatApp:
         status_frame = tk.Frame(self.sidebar, bg=self.colors["sidebar"])
         status_frame.pack(fill=tk.X, pady=(0, 20))
         
-        self.gemini_status = tk.Label(status_frame, text="● Gemini", fg="#e74c3c", bg=self.colors["sidebar"], font=("Segoe UI", 9))
-        self.gemini_status.pack(anchor="w")
-        self.deepseek_status = tk.Label(status_frame, text="● DeepSeek", fg="#e74c3c", bg=self.colors["sidebar"], font=("Segoe UI", 9))
-        self.deepseek_status.pack(anchor="w")
+        self.gemini_status = tk.Label(status_frame, text="○ Gemini", fg="#e74c3c", bg=self.colors["sidebar"], font=("Segoe UI", 9), anchor="w", justify="left")
+        self.gemini_status.pack(anchor="w", fill=tk.X)
+        self.deepseek_status = tk.Label(status_frame, text="○ DeepSeek", fg="#e74c3c", bg=self.colors["sidebar"], font=("Segoe UI", 9), anchor="w", justify="left")
+        self.deepseek_status.pack(anchor="w", fill=tk.X)
         
 
         # Bottom Sidebar Controls
@@ -310,6 +292,9 @@ class ChatApp:
         self.chat_display.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         
         self._configure_text_tags()
+        
+        # Initialize markdown renderer
+        self.markdown_renderer = MarkdownRenderer(self.chat_display)
 
         # Input Area
         input_container = tk.Frame(self.chat_area, bg=self.colors["bg"], padx=20, pady=20)
@@ -378,15 +363,33 @@ class ChatApp:
     def update_status_indicators(self):
         if self.gemini_status.winfo_exists() and self.chat_client:
             if self.chat_client.gemini_available:
-                self.gemini_status.config(fg="#2ecc71", text="●")
+                latency_text = ""
+                if self.chat_client.gemini_latency is not None:
+                    latency_text = f" ({self.chat_client.gemini_latency:.1f}s)"
+                error_text = ""
+                if self.chat_client.gemini_error:
+                    error_text = f" - {self.chat_client.gemini_error[:30]}"
+                self.gemini_status.config(fg="#2ecc71", text=f"● Gemini{latency_text}{error_text}")
             else:
-                self.gemini_status.config(fg="#e74c3c", text="○")
+                error_text = ""
+                if self.chat_client.gemini_error:
+                    error_text = f" - {self.chat_client.gemini_error[:30]}"
+                self.gemini_status.config(fg="#e74c3c", text=f"○ Gemini{error_text}")
 
         if self.deepseek_status.winfo_exists() and self.chat_client:
             if self.chat_client.deepseek_available:
-                self.deepseek_status.config(fg="#2ecc71", text="●")
+                latency_text = ""
+                if self.chat_client.deepseek_latency is not None:
+                    latency_text = f" ({self.chat_client.deepseek_latency:.1f}s)"
+                error_text = ""
+                if self.chat_client.deepseek_error:
+                    error_text = f" - {self.chat_client.deepseek_error[:30]}"
+                self.deepseek_status.config(fg="#2ecc71", text=f"● DeepSeek{latency_text}{error_text}")
             else:
-                self.deepseek_status.config(fg="#e74c3c", text="○")
+                error_text = ""
+                if self.chat_client.deepseek_error:
+                    error_text = f" - {self.chat_client.deepseek_error[:30]}"
+                self.deepseek_status.config(fg="#e74c3c", text=f"○ DeepSeek{error_text}")
 
         self.status_update_id = self.root.after(10000, self.update_status_indicators)
 
@@ -401,9 +404,25 @@ class ChatApp:
 
     def _fetch_repo_thread(self, repo_url: str):
         try:
+            if not self.gh_handler:
+                self.message_queue.put(("error", "GitHub handler not initialized"))
+                return
+            
+            if not self.gh_handler.token_valid and self.gh_handler.token:
+                self.message_queue.put(("error", 
+                    f"GitHub token is invalid: {self.gh_handler.token_error}\n"
+                    "Please update your token in Settings."))
+                return
+            
             context = self.gh_handler.fetch_repo_context(repo_url)
             self.message_queue.put(("repo_context", context))
+        except requests.exceptions.HTTPError as e:
+            error_msg = str(e)
+            if "401" in error_msg or "Token" in error_msg:
+                error_msg += "\nPlease update your GitHub token in Settings."
+            self.message_queue.put(("error", f"Failed to fetch repo: {error_msg}"))
         except Exception as e:
+            logger.error(f"Error fetching repository: {e}", exc_info=True)
             self.message_queue.put(("error", f"Failed to fetch repo: {str(e)}"))
 
     def process_queue(self):
@@ -428,13 +447,32 @@ class ChatApp:
         if sender.lower() == "you":
             header = f"You  {timestamp}\n"
             self.chat_display.insert(tk.END, header, ("timestamp", "right_align"))
+            # User messages: simple text (no markdown for user input)
             self.chat_display.insert(tk.END, f" {message} \n", "user_bubble")
         elif sender.lower() == "system":
             self.chat_display.insert(tk.END, f"--- {message} ---\n", "system")
         else:
+            # AI messages: try to render markdown
             header = f"{sender}  {timestamp}\n"
             self.chat_display.insert(tk.END, header, ("timestamp", "left_align"))
-            self.chat_display.insert(tk.END, f" {message} \n", "ai_bubble")
+            
+            # Check if message contains markdown patterns
+            has_markdown = any(pattern in message for pattern in ['**', '*', '`', '#', '['])
+            
+            if has_markdown:
+                try:
+                    # Use markdown renderer for AI responses (with ai_bubble base tag)
+                    start_pos = self.chat_display.index(tk.END)
+                    self.chat_display.insert(tk.END, " ", "ai_bubble")
+                    self.markdown_renderer.render(message, start_pos, base_tag="ai_bubble")
+                    self.chat_display.insert(tk.END, "\n")
+                except Exception as e:
+                    # Fallback to plain text if markdown rendering fails
+                    logger.warning(f"Markdown rendering failed: {e}", exc_info=True)
+                    self.chat_display.insert(tk.END, f" {message} \n", "ai_bubble")
+            else:
+                # Plain text
+                self.chat_display.insert(tk.END, f" {message} \n", "ai_bubble")
             
         self.chat_display.config(state=tk.DISABLED)
         self.chat_display.see(tk.END)
@@ -466,26 +504,65 @@ class ChatApp:
         thread.start()
 
     def get_ai_response(self, prompt: str, model: str):
-        full_prompt = prompt
+        # Sanitize user input to prevent prompt injection
+        sanitized_prompt = self._sanitize_input(prompt)
+        
+        full_prompt = sanitized_prompt
         if self.repo_context:
-            full_prompt = f"Context from GitHub Repository:\n{self.repo_context}\n\nUser Query:\n{prompt}"
+            full_prompt = f"Context from GitHub Repository:\n{self.repo_context}\n\nUser Query:\n{sanitized_prompt}"
 
+        logger.info(f"Processing AI request with model: {model}")
+        start_time = time.time()
+        
         try:
             if model == "gemini":
                 response = self.chat_client.ask_gemini(full_prompt)
+                elapsed = time.time() - start_time
+                logger.info(f"Gemini response received in {elapsed:.2f}s")
                 self.display_message("Gemini", response)
             elif model == "deepseek":
                 response = self.chat_client.ask_deepseek(full_prompt)
+                elapsed = time.time() - start_time
+                logger.info(f"DeepSeek response received in {elapsed:.2f}s")
                 self.display_message("DeepSeek", response)
             else:
                 responses = self.chat_client.ask_both(full_prompt)
+                elapsed = time.time() - start_time
+                logger.info(f"Both models responded in {elapsed:.2f}s")
                 self.display_message("Gemini", responses["gemini"])
                 self.display_message("DeepSeek", responses["deepseek"])
         except Exception as e:
+            logger.error(f"Error getting AI response: {e}", exc_info=True)
             self.display_message("System", f"Error: {str(e)}")
         finally:
             self.root.after(0, lambda: self.input_text.config(state=tk.NORMAL))
             self.root.after(0, lambda: self.input_text.focus())
+    
+    def _sanitize_input(self, user_input: str) -> str:
+        """Sanitize user input to prevent prompt injection attacks"""
+        # Remove or escape potentially dangerous patterns
+        # This is a basic implementation - can be enhanced further
+        
+        # Remove common injection patterns
+        dangerous_patterns = [
+            r'ignore\s+previous\s+instructions',
+            r'forget\s+all\s+previous',
+            r'you\s+are\s+now',
+            r'act\s+as\s+if',
+            r'pretend\s+to\s+be',
+        ]
+        
+        sanitized = user_input
+        for pattern in dangerous_patterns:
+            sanitized = re.sub(pattern, '', sanitized, flags=re.IGNORECASE)
+        
+        # Limit length to prevent extremely long prompts
+        max_length = 10000
+        if len(sanitized) > max_length:
+            logger.warning(f"Input truncated from {len(sanitized)} to {max_length} characters")
+            sanitized = sanitized[:max_length]
+        
+        return sanitized.strip()
 
     def clear_input(self):
         self.input_text.delete("1.0", tk.END)
@@ -545,35 +622,33 @@ class ChatApp:
         self.update_status_indicators()
         
     def update_github_handler(self, token: str):
-        from github_handler import GitHubHandler
-        self.gh_handler = GitHubHandler(self.repo_cache_dir, token=token)
+        """Update GitHub handler with new token."""
+        try:
+            from github_handler import GitHubHandler
+            if self.gh_handler:
+                self.gh_handler.update_token(token)
+            else:
+                self.gh_handler = GitHubHandler(self.repo_cache_dir, token=token)
+            
+            if self.gh_handler.token_valid:
+                logger.info("GitHub handler updated successfully")
+            else:
+                logger.warning(f"GitHub handler updated but token is invalid: {self.gh_handler.token_error}")
+        except Exception as e:
+            logger.error(f"Failed to update GitHub handler: {e}", exc_info=True)
+            self.display_message("System", f"Warning: Could not update GitHub handler: {str(e)}")
 
     def change_theme(self):
-        themes = {
-            "Light": {
-                "bg": "#f0f0f0", "sidebar": "#e0e0e0", "chat_bg": "#ffffff",
-                "input_bg": "#ffffff", "fg": "#000000", "fg_dim": "#7f8c8d",
-                "accent": "#3498db", "accent_hover": "#2980b9",
-                "user_bubble": "#3498db", "ai_bubble": "#ecf0f1", "border": "#bdc3c7"
-            },
-            "Dark": {
-                "bg": "#161616", "sidebar": "#1E1E1E", "chat_bg": "#000000",
-                "input_bg": "#2C2C2C", "fg": "#EEEEEE", "fg_dim": "#9E9E9E",
-                "accent": "#6210CC", "accent_hover": "#7B2FDD",
-                "user_bubble": "#6210CC", "ai_bubble": "#2C2C2C", "border": "#333333"
-            },
-            "Blue": {
-                "bg": "#2c3e50", "sidebar": "#34495e", "chat_bg": "#ecf0f1",
-                "input_bg": "#ffffff", "fg": "#2c3e50", "fg_dim": "#95a5a6",
-                "accent": "#e74c3c", "accent_hover": "#c0392b",
-                "user_bubble": "#e74c3c", "ai_bubble": "#bdc3c7", "border": "#7f8c8d"
-            }
-        }
-
-        choice = simpledialog.askstring("Change Theme", "Enter theme name (Light/Dark/Blue):", initialvalue="Light")
-        if choice and choice.capitalize() in themes:
-            self.colors = themes[choice.capitalize()]
-            self.apply_dark_theme() # Re-apply styles
+        """Change the application theme using ThemeManager."""
+        available_themes = ", ".join(self.theme_manager.list_themes())
+        choice = simpledialog.askstring(
+            "Change Theme", 
+            f"Enter theme name ({available_themes}):", 
+            initialvalue=self.theme_manager.current_theme
+        )
+        if choice and self.theme_manager.set_theme(choice):
+            self.colors = self.theme_manager.colors
+            self.apply_theme() # Re-apply styles
 
             # Update specific widgets that don't auto-update with style changes
             self.root.configure(bg=self.colors["bg"])
@@ -582,12 +657,14 @@ class ChatApp:
 
             # Update text widgets
             self.chat_display.configure(bg=self.colors["chat_bg"], fg=self.colors["fg"])
-            self.input_text.configure(bg=self.colors["input_bg"], fg=self.colors["fg"] if choice.capitalize() != "Dark" else "#ffffff")
+            self.input_text.configure(bg=self.colors["input_bg"], fg=self.colors["fg"] if self.theme_manager.current_theme != "Dark" else "#ffffff")
 
             # Update tags
             self._configure_text_tags()
 
-            messagebox.showinfo("Theme Changed", f"Theme changed to {choice}.")
+            messagebox.showinfo("Theme Changed", f"Theme changed to {self.theme_manager.current_theme}.")
+        elif choice:
+            messagebox.showwarning("Invalid Theme", f"Theme '{choice}' not found. Available themes: {available_themes}")
 
     def show_about(self):
         about_text = """AI Chat Desktop v2.0

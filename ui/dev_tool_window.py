@@ -66,10 +66,17 @@ class DevToolWindow(tk.Toplevel):
 
     def _execute_callback(self, content):
         try:
-            result = self.action_callback(content)
+            # The callback may be a prompt generator that needs the content
+            # or a direct provider call
+            if callable(self.action_callback):
+                result = self.action_callback(content)
+            else:
+                result = "Error: Invalid callback"
             self.after(0, self.display_result, result)
         except Exception as e:
-            self.after(0, self.display_result, f"An error occurred: {e}")
+            import traceback
+            error_details = f"An error occurred: {e}\n\n{traceback.format_exc()}"
+            self.after(0, self.display_result, error_details)
 
     def display_result(self, result):
         self.output_text.config(state=tk.NORMAL)

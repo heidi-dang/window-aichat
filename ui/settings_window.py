@@ -151,6 +151,16 @@ class SettingsWindow:
 
         tk.Label(gh_frame, text="(Required for private repos and higher rate limits)",
                  bg="#f0f0f0", fg="#7f8c8d", font=("Segoe UI", 8)).pack(anchor=tk.W)
+        
+        # Note about OAuth (future enhancement)
+        oauth_note = tk.Label(
+            gh_frame, 
+            text="Note: OAuth authentication support is planned for future releases.",
+            bg="#f0f0f0", 
+            fg="#95a5a6", 
+            font=("Segoe UI", 7, "italic")
+        )
+        oauth_note.pack(anchor=tk.W, pady=(2, 0))
 
     def _create_button_frame(self, parent):
         button_frame = tk.Frame(parent, bg="#f0f0f0")
