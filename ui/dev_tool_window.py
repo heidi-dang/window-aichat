@@ -1,6 +1,9 @@
 import tkinter as tk
 from tkinter import scrolledtext, ttk, messagebox
 import threading
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class DevToolWindow(tk.Toplevel):
@@ -12,9 +15,12 @@ class DevToolWindow(tk.Toplevel):
         self.grab_set()
 
         try:
+            # Attempt to set icon, handle gracefully if not found
             self.iconbitmap(default="icon.ico")
-        except Exception:
-            pass
+        except tk.TclError:
+            logger.warning("Application icon 'icon.ico' not found for DevToolWindow.")
+        except Exception as e:
+            logger.error(f"Error setting application icon for DevToolWindow: {e}")
 
         self.action_callback = action_callback
 
@@ -81,6 +87,7 @@ class DevToolWindow(tk.Toplevel):
             messagebox.showwarning(
                 "Input Missing", "Please provide input code/text.", parent=self
             )
+            logger.warning("DevToolWindow: Input content missing for action.")
             return
 
         self.status_label.config(text="Processing request with Gemini...")
@@ -99,11 +106,11 @@ class DevToolWindow(tk.Toplevel):
                 result = self.action_callback(content)
             else:
                 result = "Error: Invalid callback"
+                logger.error("DevToolWindow: action_callback is not callable.")
             self.after(0, self.display_result, result)
         except Exception as e:
-            import traceback
-
-            error_details = f"An error occurred: {e}\n\n{traceback.format_exc()}"
+            logger.error(f"DevToolWindow: Error executing callback: {e}", exc_info=True)
+            error_details = f"An error occurred: {e}\n\nCheck logs for details."
             self.after(0, self.display_result, error_details)
 
     def display_result(self, result):
@@ -120,5 +127,7 @@ class DevToolWindow(tk.Toplevel):
             self.clipboard_clear()
             self.clipboard_append(result)
             self.status_label.config(text="Result copied to clipboard.")
+            logger.info("DevToolWindow: Result copied to clipboard.")
         else:
             self.status_label.config(text="Nothing to copy.")
+            logger.info("DevToolWindow: No result to copy.")

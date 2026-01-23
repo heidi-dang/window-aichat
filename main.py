@@ -44,7 +44,7 @@ class ChatApp:
             self.root.iconbitmap(default="icon.ico")
         except (tk.TclError, FileNotFoundError) as e:
             # Icon file missing or corrupted - not critical, continue without icon
-            logging.getLogger("main").debug(f"Could not load icon: {e}")
+            logger.debug(f"Could not load icon: {e}")
 
         self.config_dir = os.path.join(os.path.expanduser("~"), ".aichatdesktop")
         self.config_path = os.path.join(self.config_dir, "config.json")

@@ -5,6 +5,9 @@ import os
 import requests
 import google.generativeai as genai
 from ai_core import SecureConfig
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class SettingsWindow:
@@ -23,9 +26,12 @@ class SettingsWindow:
         self.window.grab_set()
 
         try:
+            # Attempt to set icon, handle gracefully if not found
             self.window.iconbitmap(default="icon.ico")
-        except Exception:
-            pass
+        except tk.TclError:
+            logger.warning("Application icon 'icon.ico' not found.")
+        except Exception as e:
+            logger.error(f"Error setting application icon: {e}")
 
         self.center_window()
         self.create_widgets()
@@ -87,12 +93,12 @@ class SettingsWindow:
         )
         self.gemini_model = ttk.Combobox(
             gemini_frame,
-            values=["gemini-2.0-flash", "gemini-2.0-pro-exp"],
+            values=["gemini-1.5-flash", "gemini-1.5-pro-latest", "gemini-1.0-pro"], # Updated models
             state="readonly",
             font=("Segoe UI", 9),
         )
         self.gemini_model.pack(fill=tk.X, pady=(2, 0))
-        self.gemini_model.set("gemini-2.0-flash")
+        self.gemini_model.set("gemini-1.5-flash") # Default to a stable model
 
         tk.Label(
             gemini_frame,
@@ -137,7 +143,7 @@ class SettingsWindow:
         deepseek_btn = tk.Button(
             deepseek_frame,
             text="Get DeepSeek API Key",
-            command=lambda: webbrowser.open("https://platform.deepseek.com/api-docs"),
+            command=lambda: webbrowser.open("https://platform.deepseek.com/api-keys"), # Updated URL
             bg="#00a67e",
             fg="white",
             font=("Segoe UI", 9),
@@ -241,11 +247,10 @@ class SettingsWindow:
             "gemini_max_retries": self.gemini_max_retries.get().strip(),
         }
         try:
-            config_dir = os.path.dirname(self.config_path)
-            if config_dir and not os.path.exists(config_dir):
-                os.makedirs(config_dir)
+            # os.makedirs(os.path.dirname(self.config_path), exist_ok=True) # Redundant, handled by SecureConfig
             self.secure_config.save_config(config)
             self.status_label.config(text="Settings saved successfully!", fg="#2ecc71")
+            logger.info("API settings saved successfully.")
             if hasattr(self.parent, "chat_client"):
                 self.parent.chat_client.config = config
                 self.parent.chat_client.configure_apis()
@@ -255,6 +260,7 @@ class SettingsWindow:
             self.status_label.config(
                 text=f"Error saving settings: {str(e)}", fg="#e74c3c"
             )
+            logger.error(f"Error saving settings: {e}", exc_info=True)
 
     def test_connection(self):
         gemini_key = self.gemini_key.get().strip()
@@ -263,19 +269,29 @@ class SettingsWindow:
         self.window.update()
         results = []
 
+        # Test Gemini
         if gemini_key:
             try:
                 genai.configure(api_key=gemini_key)
-                model = genai.GenerativeModel("gemini-1.5-flash")
+                # Use the selected model for testing
+                model = genai.GenerativeModel(self.gemini_model.get())
                 response = model.generate_content(
                     "Say 'TEST OK' only", generation_config={"max_output_tokens": 5}
                 )
-                results.append("✓ Gemini: Connected")
+                if response.text.strip() == "TEST OK":
+                    results.append("✓ Gemini: Connected")
+                    logger.info("Gemini connection test successful.")
+                else:
+                    results.append(f"✗ Gemini: Unexpected response: {response.text[:50]}")
+                    logger.warning(f"Gemini connection test failed: Unexpected response.")
             except Exception as e:
                 results.append(f"✗ Gemini: {str(e)[:50]}")
+                logger.error(f"Gemini connection test failed: {e}", exc_info=True)
         else:
             results.append("○ Gemini: No key provided")
+            logger.info("Gemini connection test skipped: No key provided.")
 
+        # Test DeepSeek
         if deepseek_key:
             try:
                 headers = {
@@ -295,11 +311,18 @@ class SettingsWindow:
                 )
                 if response.status_code == 200:
                     results.append("✓ DeepSeek: Connected")
+                    logger.info("DeepSeek connection test successful.")
                 else:
                     results.append(f"✗ DeepSeek: HTTP {response.status_code}")
+                    logger.error(f"DeepSeek connection test failed: HTTP {response.status_code} - {response.text[:50]}")
+            except requests.exceptions.Timeout:
+                results.append("✗ DeepSeek: Request timed out")
+                logger.error("DeepSeek connection test failed: Request timed out.")
             except Exception as e:
                 results.append(f"✗ DeepSeek: {str(e)[:50]}")
+                logger.error(f"DeepSeek connection test failed: {e}", exc_info=True)
         else:
             results.append("○ DeepSeek: No key provided")
+            logger.info("DeepSeek connection test skipped: No key provided.")
 
         self.status_label.config(text=" | ".join(results), fg="#2ecc71")

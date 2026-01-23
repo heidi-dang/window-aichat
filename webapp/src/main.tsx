@@ -2,13 +2,7 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App.tsx'
-import * as MonacoEditor from 'monaco-editor';
-import { loader } from '@monaco-editor/react';
-
-// Configure Monaco
-loader.config({
-  monaco: MonacoEditor,
-});
+import './monaco-setup.ts'; // This line handles all Monaco setup
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

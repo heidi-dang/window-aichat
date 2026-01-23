@@ -37,23 +37,20 @@ jobs:
           pip install -r requirements.txt
           pip install pytest pytest-cov black flake8
       
-      # Fix for F821 undefined name 'e' in ui/code_chat_window.py
-      # We skip flake8 on UI files for CI as they might have issues or just ignore the specific error globally if needed
-      # For now, let's run it but allow it to fail or configure it to ignore F821 if it's a known issue
       - name: Lint with flake8
         run: |
-          # stop the build if there are Python syntax errors or undefined names
+          # Enforce strict linting for Python files
           flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
-          # exit-zero treats all errors as warnings. The GitHub editor is 127 chars wide
+          # Additional style checks, allowing warnings (exit-zero)
           flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
       
       - name: Format check with black
         run: black --check .
 
-      - name: Test backend (if tests exist)
+      - name: Test backend
         run: |
-          if [ -d "tests" ] || [ -f "test_*.py" ]; then
-            pytest --cov=. --cov-report=xml || true
+          if [ -d "tests" ] || ls test_*.py &> /dev/null; then # Check for test directory or files
+            pytest --cov=. --cov-report=xml # Removed || true to enforce test success
           else
             echo "No tests found, skipping..."
           fi
@@ -126,6 +123,8 @@ jobs:
         working-directory: ./webapp
         env:
           NODE_OPTIONS: --max-old-space-size=4096
+          # Pass the backend URL to the frontend build for API calls
+          VITE_BACKEND_URL: http://backend:8000 # 'backend' is the service name in docker-compose
         run: npm run build
 
       # REQUIRED for cache-to: type=gha
@@ -191,14 +190,13 @@ jobs:
             git pull origin main
             
             # Login to GHCR (if not already logged in or token expired)
-            # Note: You should ideally set up a cron job or persistent login on the server
             # echo ${{ secrets.GITHUB_TOKEN }} | docker login ghcr.io -u ${{ github.actor }} --password-stdin
             
             # Pull latest images
             docker-compose -f docker-compose.prod.yml pull
             
             # Restart services
-            docker-compose -f docker-compose.prod.yml up -d
+            docker-compose -f docker-compose.prod.yml up -d --build # Added --build to ensure latest changes are picked up
             
             # Cleanup unused images
             docker image prune -f

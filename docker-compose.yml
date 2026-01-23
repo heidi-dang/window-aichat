@@ -23,8 +23,10 @@ services:
 
   frontend:
     build:
-      context: .
+      context: ./webapp # Changed build context to webapp directory
       dockerfile: Dockerfile.frontend
+      args:
+        VITE_BACKEND_URL: http://backend:8000 # Pass backend URL as build argument
     container_name: window-aichat-frontend
     ports:
       - "80:80"

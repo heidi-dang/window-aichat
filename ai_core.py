@@ -7,25 +7,25 @@ import google.generativeai as genai
 from typing import Dict, Optional
 from cryptography.fernet import Fernet
 import logging
-
+import threading
 
 def setup_logging():
     log_dir = os.path.join(os.path.expanduser("~"), ".aichatdesktop")
     os.makedirs(log_dir, exist_ok=True)
     log_file = os.path.join(log_dir, "app.log")
 
-    # Clear existing handlers to avoid duplicates
+    # Get root logger
     root_logger = logging.getLogger()
-    root_logger.handlers.clear()
-
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        handlers=[
-            logging.FileHandler(log_file, encoding="utf-8"),
-            logging.StreamHandler(),
-        ],
-    )
+    # Avoid adding duplicate handlers
+    if not root_logger.handlers:
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+            handlers=[
+                logging.FileHandler(log_file, encoding="utf-8"),
+                logging.StreamHandler(),
+            ],
+        )
 
     # Set up module-specific loggers
     logging.getLogger("ai_core").setLevel(logging.INFO)
@@ -232,6 +232,21 @@ class AIChatClient:
             return error_msg
 
     def ask_both(self, prompt: str) -> Dict[str, str]:
-        gemini_response = self.ask_gemini(prompt)
-        deepseek_response = self.ask_deepseek(prompt)
-        return {"gemini": gemini_response, "deepseek": deepseek_response}
+        responses = {}
+
+        def ask_gemini_thread():
+            responses["gemini"] = self.ask_gemini(prompt)
+
+        def ask_deepseek_thread():
+            responses["deepseek"] = self.ask_deepseek(prompt)
+
+        gemini_thread = threading.Thread(target=ask_gemini_thread)
+        deepseek_thread = threading.Thread(target=ask_deepseek_thread)
+
+        gemini_thread.start()
+        deepseek_thread.start()
+
+        gemini_thread.join()
+        deepseek_thread.join()
+
+        return responses

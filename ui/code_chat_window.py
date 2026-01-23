@@ -6,6 +6,9 @@ import difflib
 import time
 import threading
 import subprocess
+import logging
+
+logger = logging.getLogger(__name__)
 
 try:
     from pygments import lex
@@ -15,6 +18,7 @@ try:
     PYGMENTS_AVAILABLE = True
 except ImportError:
     PYGMENTS_AVAILABLE = False
+    logger.warning("Pygments not installed. Falling back to regex-based syntax highlighting.")
 
 
 # --- Helper Classes for Code Editor with Line Numbers ---
@@ -29,7 +33,8 @@ class CustomText(tk.Text):
         cmd = (self._orig,) + args
         try:
             result = self.tk.call(cmd)
-        except Exception:
+        except Exception as e:
+            logger.error(f"CustomText proxy error: {e}", exc_info=True)
             return None
         if (
             args[0] in ("insert", "replace", "delete")
@@ -107,9 +112,12 @@ class CodeChatWindow(tk.Toplevel):
         self.bind("<Control-f>", self.find_text)
 
         try:
+            # Attempt to set icon, handle gracefully if not found
             self.iconbitmap(default="icon.ico")
-        except Exception:
-            pass
+        except tk.TclError:
+            logger.warning("Application icon 'icon.ico' not found for CodeChatWindow.")
+        except Exception as e:
+            logger.error(f"Error setting application icon for CodeChatWindow: {e}")
 
         self.setup_ui()
         self.setup_highlight_tags()
@@ -312,7 +320,9 @@ class CodeChatWindow(tk.Toplevel):
             text_widget.tag_configure("Token.Name.Other", foreground="#000000")
             text_widget.tag_configure("Token.Name.Tag", foreground="#800000")
             text_widget.tag_configure("Token.Name.Variable", foreground="#000000")
-            text_widget.tag_configure("Token.Name.Variable.Class", foreground="#000000")
+            text_widget.tag_configure(
+                "Token.Name.Variable.Class", foreground="#000000"
+            )
             text_widget.tag_configure(
                 "Token.Name.Variable.Global", foreground="#000000"
             )
@@ -544,6 +554,7 @@ class CodeChatWindow(tk.Toplevel):
             except Exception as e:
                 self.orig_text.delete("1.0", tk.END)
                 self.orig_text.insert(tk.END, f"Error reading file: {e}")
+                logger.error(f"Error reading file {filepath}: {e}", exc_info=True)
 
     def toggle_diff_view(self):
         if not self.selected_file or self.selected_file not in self.file_changes:
@@ -813,7 +824,8 @@ If you are just chatting, just provide text.
             response = self.chat_client.ask_gemini(prompt)
             self.after(0, self.handle_ai_response, response)
         except Exception as e:
-            self.after(0, lambda e=e: messagebox.showerror("Error", str(e)))
+            logger.error(f"Error processing AI request: {e}", exc_info=True)
+            self.after(0, lambda e_val=str(e): messagebox.showerror("Error", e_val))
 
     def handle_ai_response(self, response):
         self.thinking_start_time = 0  # Stop timer
@@ -934,6 +946,7 @@ If you are just chatting, just provide text.
                 messagebox.showinfo("Success", "All files updated.")
             except Exception as e:
                 messagebox.showerror("Error", str(e))
+                logger.error(f"Error saving all changes: {e}", exc_info=True)
 
     def reset_all_changes(self):
         if messagebox.askyesno("Reset", "Discard all pending changes?"):
@@ -995,17 +1008,22 @@ If you are just chatting, just provide text.
                     error = res.stderr
             else:
                 messagebox.showinfo("Format", f"No formatter configured for {ext}")
+                logger.info(f"No formatter configured for file extension: {ext}")
                 return
 
             if formatted:
                 self.orig_text.delete("1.0", tk.END)
                 self.orig_text.insert(tk.END, formatted)
+                logger.info(f"File {self.selected_file} formatted successfully.")
             elif error:
                 messagebox.showerror("Format Error", error)
+                logger.error(f"Error formatting file {self.selected_file}: {error}")
         except FileNotFoundError:
             messagebox.showerror(
                 "Error",
                 "Formatter tool not found. Ensure 'black' (Python) or 'prettier' (JS) is installed and in PATH.",
             )
+            logger.error("Formatter tool not found. Please install black or prettier.")
         except Exception as e:
             messagebox.showerror("Error", str(e))
+            logger.error(f"Unexpected error during code formatting: {e}", exc_info=True)
