@@ -145,7 +145,8 @@ export class AgentLoop {
           })
         });
         const data = await res.json();
-        const text = data.text;
+        const text = data.content || data.text;
+        if (!text) return null;
         const match = text.match(/```(?:json)?\n([\s\S]*?)```/);
         const jsonStr = match ? match[1] : text;
         return JSON.parse(jsonStr);
@@ -175,7 +176,7 @@ export class AgentLoop {
       if (!res.ok) throw new Error(res.statusText);
       
       const data = await res.json();
-      const text = data.text;
+      const text = data.content || data.text || '';
       
       // Extract code block
       const match = text.match(/```(?:javascript|js|typescript|ts)?\n([\s\S]*?)```/);

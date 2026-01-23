@@ -43,7 +43,7 @@ function toMessage(obj: unknown, fallbackSender = 'System'): Message {
   const anyObj = obj as ChatApiResponse;
   return {
     sender: typeof anyObj.sender === 'string' ? anyObj.sender : fallbackSender,
-    text: typeof anyObj.text === 'string' ? anyObj.text : JSON.stringify(anyObj),
+    text: typeof anyObj.text === 'string' ? anyObj.text : (typeof anyObj.content === 'string' ? anyObj.content : JSON.stringify(anyObj)),
     timestamp: typeof anyObj.timestamp === 'string' ? anyObj.timestamp : now
   };
 }
