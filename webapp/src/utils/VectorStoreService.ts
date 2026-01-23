@@ -20,6 +20,7 @@ class VectorStoreService {
   private voy: any | null = null;
   private documents: Record<string, SearchResult> = {}; // Map ID to content
   private isInitializing = false;
+  private isIndexing = false;
 
   private constructor() {}
 
@@ -55,9 +56,14 @@ class VectorStoreService {
   }
 
   async indexWorkspace(apiBase: string) {
+    if (this.isIndexing) {
+      console.log('[VectorStore] Indexing already in progress, skipping.');
+      return;
+    }
     if (!this.embedder || !this.voy) await this.init();
     if (!this.embedder || !this.voy) return;
 
+    this.isIndexing = true;
     try {
         console.log('[VectorStore] Indexing workspace...');
         const listRes = await fetch(`${apiBase}/api/fs/list`);
@@ -67,7 +73,7 @@ class VectorStoreService {
         for (const file of files) {
             if (file.type !== 'file') continue;
             // Skip huge files or binaries if possible (by extension)
-            if (file.name.match(/\.(png|jpg|jpeg|gif|ico|pdf|zip|tar|gz|map|json|lock)$/i)) continue;
+            if (file.name.match(/\.(png|jpg|jpeg|gif|ico|pdf|zip|tar|gz|map|json|lock|wasm|pyc)$/i)) continue;
 
             try {
                 const readRes = await fetch(`${apiBase}/api/fs/read`, {
@@ -86,6 +92,8 @@ class VectorStoreService {
         console.log('[VectorStore] Workspace indexing complete.');
     } catch (error) {
         console.error('[VectorStore] Workspace indexing failed:', error);
+    } finally {
+        this.isIndexing = false;
     }
   }
 

@@ -1,7 +1,5 @@
-import * as Parser from 'web-tree-sitter';
 
-// Cast to any to bypass type issues with the library
-const ParserAny = Parser as any;
+import { VectorStoreService } from './VectorStoreService';
 
 class TreeSitterService {
   private static instance: TreeSitterService;
@@ -24,15 +22,27 @@ class TreeSitterService {
 
     try {
       console.log('[TreeSitter] Initializing...');
-      await ParserAny.init();
-      this.parser = new ParserAny();
+      
+      // Dynamic import to handle module resolution safely
+      const ParserModule = await import('web-tree-sitter');
+      const ParserClass = (ParserModule as any).default || ParserModule;
+
+      console.log('[TreeSitter] Resolved ParserClass:', ParserClass);
+
+      if (typeof ParserClass.init !== 'function') {
+          throw new Error(`ParserClass.init is not a function. Keys: ${Object.keys(ParserClass)}`);
+      }
+
+      // Initialize the library
+      await ParserClass.init();
+      this.parser = new ParserClass();
       
       // Load TypeScript language from unpkg
       // Using a fixed version to ensure compatibility
       const langUrl = 'https://unpkg.com/tree-sitter-typescript@0.20.5/tree-sitter-typescript.wasm';
       console.log(`[TreeSitter] Loading language from ${langUrl}`);
       
-      this.language = await ParserAny.Language.load(langUrl);
+      this.language = await ParserClass.Language.load(langUrl);
       this.parser.setLanguage(this.language);
       
       console.log('[TreeSitter] Ready.');
@@ -43,57 +53,12 @@ class TreeSitterService {
     }
   }
 
-  async parse(content: string) {
-    if (!this.parser) await this.init();
-    if (!this.parser) return null;
-
-    return this.parser.parse(content);
+  getParser(): any | null {
+    return this.parser;
   }
 
-  /**
-   * Extract function names from the code
-   */
-  async getFunctions(content: string): Promise<string[]> {
-    const tree = await this.parse(content);
-    if (!tree) return [];
-
-    const query = this.language?.query(`
-      (function_declaration name: (identifier) @name)
-      (method_definition name: (property_identifier) @name)
-      (arrow_function) @arrow
-    `);
-
-    if (!query) return [];
-
-    const captures = query.captures(tree.rootNode);
-    return captures.map((c: any) => c.node.text);
-  }
-  
-  /**
-   * Get a structured outline of the code
-   */
-  async getOutline(content: string) {
-      const tree = await this.parse(content);
-      if (!tree) return "Unable to parse structure.";
-      
-      // Simple recursive walker to print the tree structure for debugging/context
-      const walk = (node: any, depth = 0): string => {
-          let result = "";
-          const indent = "  ".repeat(depth);
-          
-          if (node.type === 'function_declaration' || node.type === 'class_declaration' || node.type === 'method_definition') {
-              const nameNode = node.childForFieldName('name');
-              const name = nameNode ? nameNode.text : 'anonymous';
-              result += `${indent}${node.type}: ${name} (Line ${node.startPosition.row})\n`;
-          }
-          
-          for (const child of node.children) {
-              result += walk(child, depth + 1);
-          }
-          return result;
-      };
-
-      return walk(tree.rootNode);
+  getLanguage(): any | null {
+    return this.language;
   }
 }
 

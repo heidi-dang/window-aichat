@@ -1,0 +1,1 @@
+Always proceed to the next logical step without asking for confirmation. If a command fails, diagnose the error and attempt a fix automatically. Do not stop until the requested feature is fully functional and tested
