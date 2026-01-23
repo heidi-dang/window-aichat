@@ -75,6 +75,8 @@ function App() {
   // Agent State
   const [agentLogs, setAgentLogs] = useState<string[]>([]);
   const [diagnostics, setDiagnostics] = useState<string>("");
+  const [showAgentTaskModal, setShowAgentTaskModal] = useState(false);
+  const [agentTaskInput, setAgentTaskInput] = useState('');
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -245,9 +247,16 @@ function App() {
     });
   };
 
-  const runAgent = async () => {
-    const task = prompt("Enter task for Agent (e.g., 'Create a calculator in JS'):");
-    if (!task) return;
+  const openAgentModal = () => {
+    setShowAgentTaskModal(true);
+    setAgentTaskInput('');
+  };
+
+  const handleStartAgent = async () => {
+    if (!agentTaskInput.trim()) return;
+    setShowAgentTaskModal(false);
+    
+    const task = agentTaskInput;
 
     setShowTerminal(true);
     setAgentLogs([]);
@@ -594,7 +603,7 @@ function App() {
             <button onClick={() => void runTool('explain')} title="Explain Code">📖 Explain</button>
             <button onClick={() => void runTool('refactor')} title="Refactor Code">🛠 Refactor</button>
             <button onClick={() => void runTool('docs')} title="Generate Docs">📝 Docs</button>
-            <button onClick={runAgent} title="Run Agent Task">🤖 Agent</button>
+            <button onClick={openAgentModal} title="Run Agent Task">🤖 Agent</button>
             <button className="primary" onClick={() => void saveFile()} disabled={!activeFile}>💾 Save</button>
           </div>
         </div>
@@ -684,6 +693,51 @@ function App() {
         <button className={activeMobilePanel === 'editor' ? 'active' : ''} onClick={() => setActiveMobilePanel('editor')}>📝 Code</button>
         <button className={activeMobilePanel === 'chat' ? 'active' : ''} onClick={() => setActiveMobilePanel('chat')}>💬 Chat</button>
       </div>
+      {showAgentTaskModal && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: 'rgba(0, 0, 0, 0.5)',
+          display: 'flex',
+          justifyContent: 'center',
+          alignItems: 'center',
+          zIndex: 2000
+        }}>
+          <div style={{
+            width: '400px',
+            backgroundColor: '#252526',
+            padding: '20px',
+            borderRadius: '8px',
+            boxShadow: '0 4px 6px rgba(0,0,0,0.3)',
+            border: '1px solid #3e3e42'
+          }}>
+            <h3 style={{ marginTop: 0, color: '#fff' }}>Run Agent Task</h3>
+            <textarea
+              placeholder="Describe the task (e.g., 'Create a calculator in JS')"
+              value={agentTaskInput}
+              onChange={(e) => setAgentTaskInput(e.target.value)}
+              rows={4}
+              style={{
+                width: '100%',
+                marginBottom: '15px',
+                backgroundColor: '#3e3e42',
+                color: '#fff',
+                border: '1px solid #555',
+                padding: '8px',
+                borderRadius: '4px',
+                resize: 'vertical'
+              }}
+            />
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+              <button onClick={() => setShowAgentTaskModal(false)} style={{ padding: '6px 12px' }}>Cancel</button>
+              <button className="primary" onClick={handleStartAgent} style={{ padding: '6px 12px' }}>Start Agent</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
