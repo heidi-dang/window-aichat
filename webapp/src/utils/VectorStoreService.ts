@@ -1,6 +1,10 @@
-import { pipeline } from '@xenova/transformers';
+import { pipeline, env } from '@xenova/transformers';
 import { Voy } from 'voy-search';
 import TreeSitterService from './TreeSitterService';
+
+// Disable local model checks to prevent Vite from serving index.html for missing model files
+env.allowLocalModels = false;
+env.useBrowserCache = true;
 
 export interface SearchResult {
   id: string;
@@ -47,6 +51,41 @@ class VectorStoreService {
       console.error('[VectorStore] Initialization failed:', error);
     } finally {
       this.isInitializing = false;
+    }
+  }
+
+  async indexWorkspace(apiBase: string) {
+    if (!this.embedder || !this.voy) await this.init();
+    if (!this.embedder || !this.voy) return;
+
+    try {
+        console.log('[VectorStore] Indexing workspace...');
+        const listRes = await fetch(`${apiBase}/api/fs/list`);
+        if (!listRes.ok) throw new Error('Failed to list files');
+        const files: any[] = await listRes.json();
+
+        for (const file of files) {
+            if (file.type !== 'file') continue;
+            // Skip huge files or binaries if possible (by extension)
+            if (file.name.match(/\.(png|jpg|jpeg|gif|ico|pdf|zip|tar|gz|map|json|lock)$/i)) continue;
+
+            try {
+                const readRes = await fetch(`${apiBase}/api/fs/read`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ path: file.path })
+                });
+                if (readRes.ok) {
+                    const data = await readRes.json();
+                    await this.addFile(file.path, data.content);
+                }
+            } catch (err) {
+                console.error(`[VectorStore] Failed to index ${file.path}`, err);
+            }
+        }
+        console.log('[VectorStore] Workspace indexing complete.');
+    } catch (error) {
+        console.error('[VectorStore] Workspace indexing failed:', error);
     }
   }
 

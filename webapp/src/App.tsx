@@ -2,9 +2,9 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import Editor from '@monaco-editor/react';
 import * as MonacoEditor from 'monaco-editor';
 import Terminal from './components/Terminal';
+import DiffModal from './components/DiffModal';
 import { AgentLoop } from './agent/AgentLoop';
-import './App.css';
-
+import VectorStoreService from './utils/VectorStoreService';
 interface Message {
   sender: string;
   text: string;
@@ -65,6 +65,17 @@ function App() {
   const [activeFile, setActiveFile] = useState<string | null>(null);
   const [fileContent, setFileContent] = useState<string>('// Select a file to edit');
   const editorRef = useRef<MonacoEditor.editor.IStandaloneCodeEditor | null>(null);
+  const geminiKeyRef = useRef(geminiKey);
+  const deepseekKeyRef = useRef(deepseekKey);
+  const lastCompletionTsRef = useRef(0);
+
+  useEffect(() => {
+    geminiKeyRef.current = geminiKey;
+  }, [geminiKey]);
+
+  useEffect(() => {
+    deepseekKeyRef.current = deepseekKey;
+  }, [deepseekKey]);
 
   // Panel Visibility State
   const [showTerminal, setShowTerminal] = useState(false);
@@ -76,6 +87,12 @@ function App() {
   const [showAgentTaskModal, setShowAgentTaskModal] = useState(false);
   const [agentTaskInput, setAgentTaskInput] = useState('');
 
+  // Diff Modal State
+  const [showDiff, setShowDiff] = useState(false);
+  const [diffOriginal, setDiffOriginal] = useState('');
+  const [diffModified, setDiffModified] = useState('');
+  const [diffFilename, setDiffFilename] = useState('');
+
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
@@ -86,6 +103,8 @@ function App() {
 
   useEffect(() => {
     void fetchFiles();
+    // Deep Context: Index workspace on startup
+    VectorStoreService.getInstance().indexWorkspace(API_BASE);
   }, []);
 
   const fetchFiles = async () => {
@@ -163,21 +182,22 @@ function App() {
 
   const openInVSCode = async () => {
     if (!activeFile) return;
+    const normalized = activeFile.replace(/\\/g, '/');
+    const vscodeUrl = `vscode://file/${normalized}`;
     try {
       const res = await fetch(`${API_BASE}/api/system/open-vscode`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ path: activeFile })
       });
-      if (res.ok) {
-        console.log('Opened in VS Code');
-      } else {
-        const errorText = await readErrorText(res);
-        alert(`Failed to open VS Code: ${errorText}`);
-      }
+      if (res.ok) { return; }
     } catch (error: unknown) {
-      console.error("Failed to open VS Code", error);
-      alert("Failed to open VS Code. Ensure it is installed and in your PATH.");
+      /* no-op */
+    }
+    try {
+      window.location.href = vscodeUrl;
+    } catch {
+      alert(`Failed to open VS Code: ${normalized}`);
     }
   };
 
@@ -252,6 +272,54 @@ function App() {
       void saveFile();
     });
 
+    // Predictive Editing (Ghost Text)
+    const completionProvider = {
+      provideInlineCompletions: async (model: MonacoEditor.editor.ITextModel, position: MonacoEditor.Position) => {
+        const now = Date.now();
+        if (now - lastCompletionTsRef.current < 300) {
+          return { items: [] };
+        }
+        lastCompletionTsRef.current = now;
+        const fullText = model.getValue();
+        const offset = model.getOffsetAt(position);
+
+        try {
+          const res = await fetch(`${API_BASE}/api/completion`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              code: fullText,
+              cursor_offset: offset,
+              gemini_key: geminiKeyRef.current,
+              deepseek_key: deepseekKeyRef.current
+            })
+          });
+          
+          if (res.ok) {
+            const data = await res.json();
+            if (data.completion) {
+               return {
+                 items: [{
+                   insertText: data.completion
+                 }]
+               };
+            }
+          }
+        } catch (e) {
+          console.error(e);
+        }
+        return { items: [] };
+      },
+      freeInlineCompletions: () => {},
+      disposeInlineCompletions: () => {}
+    };
+
+    // Register for supported languages
+    // Note: In a real app, manage disposables to avoid duplicate registration
+    monaco.languages.registerInlineCompletionsProvider('javascript', completionProvider);
+    monaco.languages.registerInlineCompletionsProvider('typescript', completionProvider);
+    monaco.languages.registerInlineCompletionsProvider('python', completionProvider);
+
     // LSP Diagnostic Hook
     monaco.editor.onDidChangeMarkers(() => {
       const model = editor.getModel();
@@ -290,8 +358,36 @@ function App() {
         diagnostics,
         currentFile: activeFile || undefined,
         currentFileContent: fileContent
+      },
+      onSuccess: (filename, content) => {
+        // If the modified file matches the current file (or if we want to show diff regardless)
+        // For now, assume we are editing the current file or creating a new one.
+        // If creating new, original is empty.
+        
+        // If filename matches activeFile, use fileContent as original.
+        // Otherwise, it might be a new file or another file.
+        // Simplified: If filename is activeFile (basename check), use fileContent.
+        
+        const isCurrent = activeFile && (activeFile.endsWith(filename) || activeFile === filename);
+        const original = isCurrent ? fileContent : ''; 
+        
+        setDiffOriginal(original);
+        setDiffModified(content);
+        setDiffFilename(filename);
+        setShowDiff(true);
       }
     });
+  };
+
+  const handleAcceptDiff = () => {
+    setFileContent(diffModified);
+    setShowDiff(false);
+    // Optionally save immediately? For now, just update editor.
+    alert('Changes applied to editor. Don\'t forget to Save!');
+  };
+
+  const handleRejectDiff = () => {
+    setShowDiff(false);
   };
 
   const saveSettings = () => {
@@ -612,8 +708,8 @@ function App() {
             <button onClick={() => void runTool('refactor')} title="Refactor Code">🛠 Refactor</button>
             <button onClick={() => void runTool('docs')} title="Generate Docs">📝 Docs</button>
             <button onClick={openAgentModal} title="Run Agent Task">🤖 Agent</button>
-            <button onClick={openInVSCode} title="Open in VS Code" style={{ backgroundColor: '#007acc' }}>Open VS Code</button>
-            <button className="primary" onClick={() => void saveFile()} disabled={!activeFile}>💾 Save</button>
+            <button className="btn-vscode" onClick={openInVSCode} title="Open in VS Code">Open VS Code</button>
+            <button className="btn-primary" onClick={() => void saveFile()} disabled={!activeFile}>💾 Save</button>
           </div>
         </div>
         <div className="monaco-wrapper" style={{ height: showTerminal ? '60%' : '100%' }}>
@@ -637,16 +733,16 @@ function App() {
           />
         </div>
         {showTerminal && (
-          <div className="terminal-wrapper" style={{ height: '40%', borderTop: '1px solid #333' }}>
-             <div className="terminal-header" style={{ padding: '5px', background: '#252526', color: '#fff', display: 'flex', justifyContent: 'space-between' }}>
+          <div className="terminal-wrapper">
+             <div className="terminal-header">
                <span>Terminal / Agent Logs</span>
-               <button onClick={() => setShowTerminal(false)}>x</button>
+               <button onClick={() => setShowTerminal(false)}>×</button>
              </div>
-             <div style={{ display: 'flex', height: 'calc(100% - 30px)' }}>
-               <div style={{ width: '50%', height: '100%' }}>
+             <div className="terminal-body">
+               <div className="terminal-pane">
                  <Terminal />
                </div>
-               <div style={{ width: '50%', height: '100%', overflowY: 'auto', background: '#1e1e1e', color: '#ccc', padding: '10px', fontSize: '12px', fontFamily: 'monospace' }}>
+               <div className="agent-logs">
                  {agentLogs.map((log, i) => <div key={i}>{log}</div>)}
                </div>
              </div>
@@ -705,49 +801,31 @@ function App() {
         <button className={activeMobilePanel === 'chat' ? 'active' : ''} onClick={() => setActiveMobilePanel('chat')}>💬 Chat</button>
       </div>
       {showAgentTaskModal && (
-        <div style={{
-          position: 'fixed',
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          backgroundColor: 'rgba(0, 0, 0, 0.5)',
-          display: 'flex',
-          justifyContent: 'center',
-          alignItems: 'center',
-          zIndex: 2000
-        }}>
-          <div style={{
-            width: '400px',
-            backgroundColor: '#252526',
-            padding: '20px',
-            borderRadius: '8px',
-            boxShadow: '0 4px 6px rgba(0,0,0,0.3)',
-            border: '1px solid #3e3e42'
-          }}>
-            <h3 style={{ marginTop: 0, color: '#fff' }}>Run Agent Task</h3>
+        <div className="modal-overlay" onClick={() => setShowAgentTaskModal(false)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+            <h3 className="modal-title">Run Agent Task</h3>
             <textarea
+              className="modal-textarea"
               placeholder="Describe the task (e.g., 'Create a calculator in JS')"
               value={agentTaskInput}
               onChange={(e) => setAgentTaskInput(e.target.value)}
               rows={4}
-              style={{
-                width: '100%',
-                marginBottom: '15px',
-                backgroundColor: '#3e3e42',
-                color: '#fff',
-                border: '1px solid #555',
-                padding: '8px',
-                borderRadius: '4px',
-                resize: 'vertical'
-              }}
             />
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
-              <button onClick={() => setShowAgentTaskModal(false)} style={{ padding: '6px 12px' }}>Cancel</button>
-              <button className="primary" onClick={handleStartAgent} style={{ padding: '6px 12px' }}>Start Agent</button>
+            <div className="modal-actions">
+              <button className="modal-btn" onClick={() => setShowAgentTaskModal(false)}>Cancel</button>
+              <button className="modal-btn primary" onClick={handleStartAgent}>Start Agent</button>
             </div>
           </div>
         </div>
+      )}
+      {showDiff && (
+        <DiffModal
+          original={diffOriginal}
+          modified={diffModified}
+          filename={diffFilename}
+          onAccept={handleAcceptDiff}
+          onReject={handleRejectDiff}
+        />
       )}
     </div>
   );

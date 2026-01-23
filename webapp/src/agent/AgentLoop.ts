@@ -13,11 +13,12 @@ interface AgentOptions {
     currentFile?: string;
     currentFileContent?: string;
   };
+  onSuccess?: (filename: string, content: string) => void;
 }
 
 export class AgentLoop {
   static async runTask(task: string, options: AgentOptions) {
-    const { onLog, context } = options;
+    const { onLog, context, onSuccess } = options;
     onLog(`[Agent] Starting task: ${task}`);
 
     // Pre-load Vector Store
@@ -37,6 +38,15 @@ export class AgentLoop {
     while (attempts < maxAttempts) {
       attempts++;
       onLog(`[Agent] Attempt ${attempts}/${maxAttempts}`);
+
+      // 0. Planning Phase
+      onLog('[Agent] Planning...');
+      const planPrompt = `Task: ${currentTask}\n\nAnalyze the request and return a JSON plan with steps to achieve it. Format: { "steps": ["step 1", "step 2"], "files_to_create": ["filename"], "command_to_run": "cmd" }.`;
+      
+      const planJson = await this.generatePlan(planPrompt, options);
+      if (planJson) {
+         onLog(`[Agent] Plan: ${JSON.stringify(planJson, null, 2)}`);
+      }
 
       // 1. Generate Code with RAG
       onLog('[Agent] Generating code...');
@@ -73,6 +83,22 @@ export class AgentLoop {
       await WebContainerService.writeFile(filename, code);
       onLog(`[Agent] Wrote to ${filename}`);
 
+      // Persistence: Write to backend filesystem
+      try {
+        const saveRes = await fetch(`${options.apiBase}/api/fs/write`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ path: filename, content: code })
+        });
+        if (saveRes.ok) {
+           onLog(`[Agent] Persisted ${filename} to backend.`);
+        } else {
+           onLog(`[Agent] Failed to persist ${filename} to backend.`);
+        }
+      } catch (err) {
+        onLog(`[Agent] Error persisting ${filename}: ${err}`);
+      }
+
       // Index the NEW code so subsequent steps know about it
       await vectorStore.addFile(filename, code);
 
@@ -92,6 +118,9 @@ export class AgentLoop {
       // 4. Verify
       if (exitCode === 0) {
         onLog('[Agent] Task completed successfully!');
+        if (onSuccess) {
+            onSuccess(filename, code);
+        }
         return;
       } else {
         onLog(`[Agent] Command failed with exit code ${exitCode}. Analyzing error...`);
@@ -101,6 +130,29 @@ export class AgentLoop {
     }
     
     onLog('[Agent] Max attempts reached. Task failed.');
+  }
+
+  static async generatePlan(prompt: string, options: AgentOptions): Promise<any> {
+    try {
+        const res = await fetch(`${options.apiBase}/api/chat`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            message: `${prompt}\n\nReturn ONLY the JSON.`,
+            model: 'gemini',
+            gemini_key: options.geminiKey,
+            deepseek_key: options.deepseekKey
+          })
+        });
+        const data = await res.json();
+        const text = data.text;
+        const match = text.match(/```(?:json)?\n([\s\S]*?)```/);
+        const jsonStr = match ? match[1] : text;
+        return JSON.parse(jsonStr);
+    } catch (e) {
+        console.warn('Failed to generate plan JSON', e);
+        return null;
+    }
   }
 
   static async generateCode(prompt: string, options: AgentOptions): Promise<string> {
