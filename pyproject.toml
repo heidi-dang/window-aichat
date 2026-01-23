@@ -20,7 +20,11 @@ dependencies = [
     "python-multipart",
     "aiofiles",
     "psutil",
-    "pygments"
+    "pygments",
+    "httpx",
+    "sqlalchemy",
+    "python-jose",
+    "python-dotenv"
 ]
 requires-python = ">=3.8"
 

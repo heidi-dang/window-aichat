@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import Editor from '@monaco-editor/react';
 import * as MonacoEditor from 'monaco-editor';
+import Terminal from './components/Terminal';
+import { AgentLoop } from './agent/AgentLoop';
 import './App.css';
 
 interface Message {
@@ -67,7 +69,12 @@ function App() {
   // Panel Visibility State
   const [showSidebar, setShowSidebar] = useState(true);
   const [showChat, setShowChat] = useState(true);
+  const [showTerminal, setShowTerminal] = useState(false);
   const [activeMobilePanel, setActiveMobilePanel] = useState('editor');
+
+  // Agent State
+  const [agentLogs, setAgentLogs] = useState<string[]>([]);
+  const [diagnostics, setDiagnostics] = useState<string>("");
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -223,6 +230,40 @@ function App() {
     editorRef.current = editor;
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
       void saveFile();
+    });
+
+    // LSP Diagnostic Hook
+    monaco.editor.onDidChangeMarkers(() => {
+      const model = editor.getModel();
+      if (model) {
+        const markers = monaco.editor.getModelMarkers({ resource: model.uri });
+        const errors = markers
+          .map(m => `Line ${m.startLineNumber}: [${m.severity === monaco.MarkerSeverity.Error ? 'Error' : 'Warning'}] ${m.message}`)
+          .join('\n');
+        setDiagnostics(errors);
+      }
+    });
+  };
+
+  const runAgent = async () => {
+    const task = prompt("Enter task for Agent (e.g., 'Create a calculator in JS'):");
+    if (!task) return;
+
+    setShowTerminal(true);
+    setAgentLogs([]);
+    
+    await AgentLoop.runTask(task, {
+      apiBase: API_BASE,
+      geminiKey,
+      deepseekKey,
+      githubToken,
+      repoUrl,
+      onLog: (msg) => setAgentLogs(prev => [...prev, msg]),
+      context: {
+        diagnostics,
+        currentFile: activeFile || undefined,
+        currentFileContent: fileContent
+      }
     });
   };
 
@@ -553,10 +594,11 @@ function App() {
             <button onClick={() => void runTool('explain')} title="Explain Code">📖 Explain</button>
             <button onClick={() => void runTool('refactor')} title="Refactor Code">🛠 Refactor</button>
             <button onClick={() => void runTool('docs')} title="Generate Docs">📝 Docs</button>
+            <button onClick={runAgent} title="Run Agent Task">🤖 Agent</button>
             <button className="primary" onClick={() => void saveFile()} disabled={!activeFile}>💾 Save</button>
           </div>
         </div>
-        <div className="monaco-wrapper">
+        <div className="monaco-wrapper" style={{ height: showTerminal ? '60%' : '100%' }}>
           <Editor
             height="100%"
             defaultLanguage="javascript"
@@ -574,6 +616,22 @@ function App() {
             }}
           />
         </div>
+        {showTerminal && (
+          <div className="terminal-wrapper" style={{ height: '40%', borderTop: '1px solid #333' }}>
+             <div className="terminal-header" style={{ padding: '5px', background: '#252526', color: '#fff', display: 'flex', justifyContent: 'space-between' }}>
+               <span>Terminal / Agent Logs</span>
+               <button onClick={() => setShowTerminal(false)}>x</button>
+             </div>
+             <div style={{ display: 'flex', height: 'calc(100% - 30px)' }}>
+               <div style={{ width: '50%', height: '100%' }}>
+                 <Terminal />
+               </div>
+               <div style={{ width: '50%', height: '100%', overflowY: 'auto', background: '#1e1e1e', color: '#ccc', padding: '10px', fontSize: '12px', fontFamily: 'monospace' }}>
+                 {agentLogs.map((log, i) => <div key={i}>{log}</div>)}
+               </div>
+             </div>
+          </div>
+        )}
       </div>
 
       {/* Chat Area */}
@@ -611,35 +669,20 @@ function App() {
                 void sendMessage();
               }
             }}
-            placeholder="Ask AI..."
+            placeholder="Type a message... (Shift+Enter for new line)"
           />
-          <button onClick={() => void sendMessage()} disabled={isLoading}>
-            ➤
+          <button onClick={() => void sendMessage()} disabled={isLoading || !input.trim()}>
+            Send
           </button>
         </div>
-        <div className="resizer-handle" onMouseDown={startResizeChat}></div>
+        <div className="resizer-handle left" onMouseDown={startResizeChat}></div>
       </div>
-
-      {/* Bottom Navigation for Mobile */}
-      <div className="bottom-nav">
-        <button 
-          className={activeMobilePanel === 'sidebar' ? 'active' : ''} 
-          onClick={() => setActiveMobilePanel('sidebar')}
-        >
-          Files
-        </button>
-        <button 
-          className={activeMobilePanel === 'editor' ? 'active' : ''} 
-          onClick={() => setActiveMobilePanel('editor')}
-        >
-          Editor
-        </button>
-        <button 
-          className={activeMobilePanel === 'chat' ? 'active' : ''} 
-          onClick={() => setActiveMobilePanel('chat')}
-        >
-          Chat
-        </button>
+      
+      {/* Mobile Nav */}
+      <div className="mobile-nav">
+        <button className={activeMobilePanel === 'sidebar' ? 'active' : ''} onClick={() => setActiveMobilePanel('sidebar')}>📁 Files</button>
+        <button className={activeMobilePanel === 'editor' ? 'active' : ''} onClick={() => setActiveMobilePanel('editor')}>📝 Code</button>
+        <button className={activeMobilePanel === 'chat' ? 'active' : ''} onClick={() => setActiveMobilePanel('chat')}>💬 Chat</button>
       </div>
     </div>
   );
