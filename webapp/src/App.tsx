@@ -1,7 +1,9 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import Editor from '@monaco-editor/react';
 import * as MonacoEditor from 'monaco-editor';
 import './App.css';
+import MonacoWrapper from './components/IDE/MonacoWrapper';
+import FileExplorer from './components/IDE/FileExplorer';
+import StatusBar from './components/IDE/StatusBar';
 
 interface Message {
   sender: string;
@@ -63,6 +65,8 @@ function App() {
   const [activeFile, setActiveFile] = useState<string | null>(null);
   const [fileContent, setFileContent] = useState<string>('// Select a file to edit');
   const editorRef = useRef<MonacoEditor.editor.IStandaloneCodeEditor | null>(null);
+  const [editorLine, setEditorLine] = useState(1);
+  const [editorColumn, setEditorColumn] = useState(1);
 
   // Panel Visibility State
   const [showSidebar, setShowSidebar] = useState(true);
@@ -224,6 +228,11 @@ function App() {
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
       void saveFile();
     });
+
+    editor.onDidChangeCursorPosition((e) => {
+      setEditorLine(e.position.lineNumber);
+      setEditorColumn(e.position.column);
+    });
   };
 
   const saveSettings = () => {
@@ -317,7 +326,7 @@ function App() {
           text: `Clone successful: ${data.message}`,
           timestamp: new Date().toLocaleTimeString()
         }]);
-        fetchFiles(); // Refresh file explorer
+        void fetchFiles(); // Refresh file explorer
       } else {
         setMessages(prev => [...prev, {
           sender: 'System',
@@ -368,7 +377,7 @@ function App() {
           text: `Upload successful: ${data.message}`,
           timestamp: new Date().toLocaleTimeString()
         }]);
-        fetchFiles(); // Refresh file explorer
+        void fetchFiles(); // Refresh file explorer
       } else {
         setMessages(prev => [...prev, {
           sender: 'System',
@@ -392,7 +401,8 @@ function App() {
     }
   };
 
-  const getLanguage = (filename: string) => {
+  const getLanguage = (filename: string | null) => {
+    if (!filename) return 'plaintext';
     const ext = filename.split('.').pop();
     switch (ext) {
       case 'js': return 'javascript';
@@ -468,81 +478,78 @@ function App() {
       </div>
 
       {/* Sidebar */}
-      <div className={`sidebar ${activeMobilePanel === 'sidebar' ? 'visible' : ''}`} style={{ width: sidebarWidth }} ref={sidebarRef}>
-        <div className="sidebar-header">
-          <h2>AI IDE</h2>
-        </div>
-        
-        <div className="sidebar-section">
-          <button onClick={() => setShowSettings(!showSettings)}>
-            ⚙ Settings
-          </button>
-        </div>
-
-        {showSettings && (
-          <div className="settings-panel">
-            <h3>Configuration</h3>
-            <input 
-              type="password" 
-              placeholder="Gemini API Key"
-              value={geminiKey}
-              onChange={(e) => setGeminiKey(e.target.value)}
-            />
-            <input 
-              type="password" 
-              placeholder="DeepSeek API Key"
-              value={deepseekKey}
-              onChange={(e) => setDeepseekKey(e.target.value)}
-            />
-            <input 
-              type="password" 
-              placeholder="GitHub Token"
-              value={githubToken}
-              onChange={(e) => setGithubToken(e.target.value)}
-            />
-            <input 
-              type="text" 
-              placeholder="GitHub Repo URL"
-              value={repoUrl}
-              onChange={(e) => setRepoUrl(e.target.value)}
-            />
-            <button className="save-btn" onClick={saveSettings}>Save</button>
+      {showSidebar && (
+        <div className={`sidebar ${activeMobilePanel === 'sidebar' ? 'visible' : ''}`} style={{ width: sidebarWidth }} ref={sidebarRef}>
+          <div className="sidebar-header">
+            <h2>AI IDE</h2>
           </div>
-        )}
+          
+          <div className="sidebar-section">
+            <button onClick={() => setShowSettings(!showSettings)}>
+              ⚙ Settings
+            </button>
+          </div>
 
-        <div className="sidebar-section">
-          <button onClick={cloneRepo} disabled={isLoading || !repoUrl}>
-            {isLoading ? 'Cloning...' : 'Clone GitHub Repo'}
-          </button>
-          <input 
-            type="file" 
-            id="upload-zip" 
-            style={{ display: 'none' }} 
-            onChange={uploadFile} 
-            disabled={isLoading}
+          {showSettings && (
+            <div className="settings-panel">
+              <h3>Configuration</h3>
+              <input 
+                type="password" 
+                placeholder="Gemini API Key"
+                value={geminiKey}
+                onChange={(e) => setGeminiKey(e.target.value)}
+              />
+              <input 
+                type="password" 
+                placeholder="DeepSeek API Key"
+                value={deepseekKey}
+                onChange={(e) => setDeepseekKey(e.target.value)}
+              />
+              <input 
+                type="password" 
+                placeholder="GitHub Token"
+                value={githubToken}
+                onChange={(e) => setGithubToken(e.target.value)}
+              />
+              <input 
+                type="text" 
+                placeholder="GitHub Repo URL"
+                value={repoUrl}
+                onChange={(e) => setRepoUrl(e.target.value)}
+              />
+              <button className="save-btn" onClick={saveSettings}>Save</button>
+            </div>
+          )}
+
+          <div className="sidebar-section">
+            <button onClick={() => void cloneRepo()} disabled={isLoading || !repoUrl}>
+              {isLoading ? 'Cloning...' : 'Clone GitHub Repo'}
+            </button>
+            <input 
+              type="file" 
+              id="upload-zip" 
+              style={{ display: 'none' }} 
+              onChange={(e) => void uploadFile(e)} 
+              disabled={isLoading}
+            />
+            <button onClick={() => document.getElementById('upload-zip')?.click()} disabled={isLoading}>
+              Upload Zip/File
+            </button>
+          </div>
+
+          <FileExplorer
+            files={files}
+            activeFile={activeFile}
+            onFileClick={openFile}
+            onRefresh={() => void fetchFiles()}
+            onCloneRepo={() => void cloneRepo()}
+            onUploadFile={(e) => void uploadFile(e)}
+            isLoading={isLoading}
+            repoUrl={repoUrl}
           />
-          <button onClick={() => document.getElementById('upload-zip')?.click()} disabled={isLoading}>
-            Upload Zip/File
-          </button>
+          <div className="resizer-handle" onMouseDown={startResizeSidebar}></div>
         </div>
-
-        <div className="file-explorer">
-          <h3>Workspace</h3>
-          <button className="refresh-btn" onClick={fetchFiles}>↻ Refresh</button>
-          <ul>
-            {files.map((file, idx) => (
-              <li 
-                key={idx} 
-                className={`${file.type} ${activeFile === file.path ? 'active' : ''}`}
-                onClick={() => file.type === 'file' && openFile(file.path)}
-              >
-                {file.type === 'directory' ? '📁' : '📄'} {file.name}
-              </li>
-            ))}
-          </ul>
-        </div>
-        <div className="resizer-handle" onMouseDown={startResizeSidebar}></div>
-      </div>
+      )}
 
       {/* Editor Area */}
       <div className={`editor-area ${activeMobilePanel === 'editor' ? 'visible' : ''}`}>
@@ -557,23 +564,14 @@ function App() {
           </div>
         </div>
         <div className="monaco-wrapper">
-          <Editor
-            height="100%"
-            defaultLanguage="javascript"
-            language={activeFile ? getLanguage(activeFile) : 'plaintext'}
-            value={fileContent}
-            theme="vs-dark"
+          <MonacoWrapper
+            fileContent={fileContent}
+            activeFile={activeFile}
             onMount={handleEditorDidMount}
             onChange={(value) => setFileContent(value || '')}
-            options={{
-              minimap: { enabled: false },
-              fontSize: 14,
-              wordWrap: 'on',
-              automaticLayout: true,
-              padding: { top: 10 }
-            }}
           />
         </div>
+        <StatusBar activeFile={activeFile} language={getLanguage(activeFile)} line={editorLine} column={editorColumn} />
       </div>
 
       {/* Chat Area */}

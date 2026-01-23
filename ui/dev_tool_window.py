@@ -111,7 +111,7 @@ class DevToolWindow(tk.Toplevel):
         except Exception as e:
             logger.error(f"DevToolWindow: Error executing callback: {e}", exc_info=True)
             error_details = f"An error occurred: {e}\n\nCheck logs for details."
-            self.after(0, self.display_result, error_details)
+            self.after(0, lambda result=error_details: self.display_result(result))
 
     def display_result(self, result):
         self.output_text.config(state=tk.NORMAL)
