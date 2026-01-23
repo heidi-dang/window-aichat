@@ -1,6 +1,3 @@
-
-import { VectorStoreService } from './VectorStoreService';
-
 class TreeSitterService {
   private static instance: TreeSitterService;
   private parser: any | null = null;
@@ -59,6 +56,41 @@ class TreeSitterService {
 
   getLanguage(): any | null {
     return this.language;
+  }
+
+  async getFunctions(content: string): Promise<string[]> {
+    await this.init();
+    if (!this.parser) return [];
+
+    try {
+      const tree = this.parser.parse(content);
+      const chunks: string[] = [];
+      const types = new Set([
+        'function_declaration',
+        'method_definition',
+        'class_declaration'
+      ]);
+
+      const visit = (node: any) => {
+        if (!node) return;
+        if (types.has(node.type)) {
+          const start = typeof node.startIndex === 'number' ? node.startIndex : 0;
+          const end = typeof node.endIndex === 'number' ? node.endIndex : 0;
+          const snippet = content.slice(start, end);
+          if (snippet.trim()) chunks.push(snippet);
+        }
+        const childCount = typeof node.childCount === 'number' ? node.childCount : 0;
+        for (let i = 0; i < childCount; i++) {
+          visit(node.child(i));
+        }
+      };
+
+      visit(tree.rootNode);
+      return chunks;
+    } catch (e) {
+      console.warn('[TreeSitter] Parse failed', e);
+      return [];
+    }
   }
 }
 

@@ -21,10 +21,14 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 import uvicorn
+try:
+    from window_aichat.api.server import app as packaged_app
+except Exception:
+    packaged_app = None
 
 
 
-# Ensure local modules can be imported
+
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
@@ -600,6 +604,9 @@ async def chrome_devtools_config():
     """Silence Chrome DevTools 404 errors."""
 
     return JSONResponse(content={})
+
+if packaged_app is not None:
+    app = packaged_app
 
 
 

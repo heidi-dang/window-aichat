@@ -118,6 +118,10 @@ jobs:
       - name: Lint frontend
         working-directory: ./webapp
         run: npm run lint || true
+      
+      - name: Test frontend
+        working-directory: ./webapp
+        run: npm test
 
       - name: Build frontend
         working-directory: ./webapp

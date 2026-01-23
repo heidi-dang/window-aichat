@@ -7,77 +7,30 @@ import { Sidebar } from './components/Layout/Sidebar';
 import { EditorPanel } from './components/Editor/EditorPanel';
 import { ChatInterface } from './components/Chat/ChatInterface';
 import { SettingsModal } from './components/SettingsModal';
-
-interface Message {
-  sender: string;
-  text: string;
-  timestamp: string;
-}
-
-interface FileEntry {
-  name: string;
-  type: 'file' | 'directory';
-  path: string;
-}
-
-type ChatApiResponse = Partial<Message> & Record<string, unknown>;
-
-const API_BASE =
-  (import.meta as { env: Record<string, string | undefined> }).env?.VITE_API_BASE?.replace(/\/$/, '') ||
-  '';
-
-async function readErrorText(res: Response): Promise<string> {
-  try {
-    const text = await res.text();
-    return text || `${res.status} ${res.statusText}`;
-  } catch {
-    return `${res.status} ${res.statusText}`;
-  }
-}
-
-function toMessage(obj: unknown, fallbackSender = 'System'): Message {
-  const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  if (!obj || typeof obj !== 'object') {
-    return { sender: fallbackSender, text: String(obj ?? ''), timestamp: now };
-  }
-  const anyObj = obj as ChatApiResponse;
-  return {
-    sender: typeof anyObj.sender === 'string' ? anyObj.sender : fallbackSender,
-    text: typeof anyObj.text === 'string' ? anyObj.text : (typeof anyObj.content === 'string' ? anyObj.content : JSON.stringify(anyObj)),
-    timestamp: typeof anyObj.timestamp === 'string' ? anyObj.timestamp : now
-  };
-}
+import { API_BASE } from './api/client';
+import * as api from './api/routes';
+import { useChat } from './hooks/useChat';
+import { useSettings } from './hooks/useSettings';
+import { useWorkspaceFs } from './hooks/useWorkspaceFs';
 
 function App() {
-  // Chat State
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [input, setInput] = useState('');
+  const chat = useChat();
+  const settings = useSettings();
+  const workspace = useWorkspaceFs();
+
   const [isLoading, setIsLoading] = useState(false);
-
-  // Settings State
-  const [geminiKey, setGeminiKey] = useState(localStorage.getItem('gemini_key') || '');
-  const [deepseekKey, setDeepseekKey] = useState(localStorage.getItem('deepseek_key') || '');
-  const [githubToken, setGithubToken] = useState(localStorage.getItem('github_token') || '');
-  const [repoUrl, setRepoUrl] = useState(localStorage.getItem('repo_url') || '');
-  const [selectedModel, setSelectedModel] = useState('gemini');
-  const [showSettings, setShowSettings] = useState(false);
-
-  // File System & Editor State
-  const [files, setFiles] = useState<FileEntry[]>([]);
-  const [activeFile, setActiveFile] = useState<string | null>(null);
-  const [fileContent, setFileContent] = useState<string>('// Select a file to edit');
   const editorRef = useRef<MonacoEditor.editor.IStandaloneCodeEditor | null>(null);
-  const geminiKeyRef = useRef(geminiKey);
-  const deepseekKeyRef = useRef(deepseekKey);
+  const geminiKeyRef = useRef(settings.geminiKey);
+  const deepseekKeyRef = useRef(settings.deepseekKey);
   const lastCompletionTsRef = useRef(0);
 
   useEffect(() => {
-    geminiKeyRef.current = geminiKey;
-  }, [geminiKey]);
+    geminiKeyRef.current = settings.geminiKey;
+  }, [settings.geminiKey]);
 
   useEffect(() => {
-    deepseekKeyRef.current = deepseekKey;
-  }, [deepseekKey]);
+    deepseekKeyRef.current = settings.deepseekKey;
+  }, [settings.deepseekKey]);
 
   // Panel Visibility State
   const [showTerminal, setShowTerminal] = useState(false);
@@ -95,80 +48,8 @@ function App() {
   const [diffFilename, setDiffFilename] = useState('');
 
   useEffect(() => {
-    void fetchFiles();
     VectorStoreService.getInstance().indexWorkspace(API_BASE);
   }, []);
-
-  const fetchFiles = async () => {
-    try {
-      const res = await fetch(`${API_BASE}/api/fs/list`);
-      if (res.ok) {
-        const data = await res.json();
-        setFiles(data);
-      }
-    } catch (error: unknown) {
-      console.error("Failed to fetch files", error);
-    }
-  };
-
-  const openFile = async (path: string) => {
-    try {
-      const res = await fetch(`${API_BASE}/api/fs/read`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path })
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setFileContent(data.content);
-        setActiveFile(path);
-      } else {
-        const errorText = await readErrorText(res);
-        alert(`Failed to read file: ${errorText}`);
-      }
-    } catch (error) {
-       alert('Failed to read file');
-    }
-  };
-
-  const saveFile = async () => {
-    if (!activeFile) { return; }
-    const content = editorRef.current ? editorRef.current.getValue() : fileContent;
-    
-    try {
-      const res = await fetch(`${API_BASE}/api/fs/write`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path: activeFile, content })
-      });
-      if (res.ok) {
-        console.log('File saved');
-      } else {
-        const errorText = await readErrorText(res);
-        alert(`Failed to save file: ${errorText}`);
-      }
-    } catch (error) {
-      alert('Failed to save file');
-    }
-  };
-
-  const openInVSCode = async () => {
-    if (!activeFile) return;
-    const normalized = activeFile.replace(/\\/g, '/');
-    const vscodeUrl = `vscode://file/${normalized}`;
-    try {
-      await fetch(`${API_BASE}/api/system/open-vscode`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path: activeFile })
-      });
-    } catch { /* no-op */ }
-    try {
-      window.location.href = vscodeUrl;
-    } catch {
-      alert(`Failed to open VS Code: ${normalized}`);
-    }
-  };
 
   const runTool = async (tool: string) => {
     if (!editorRef.current) { return; }
@@ -184,41 +65,17 @@ function App() {
     }
 
     setIsLoading(true);
-    setMessages(prev => [...prev, {
-      sender: 'System',
-      text: `Running ${tool}...`,
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-    }]);
+    chat.pushSystemMessage(`Running ${tool}...`);
 
     try {
-      const res = await fetch(`${API_BASE}/api/tool`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          tool,
-          code,
-          gemini_key: geminiKey
-        })
-      });
-
-      if (!res.ok) {
-        const errorText = await readErrorText(res);
-        setMessages(prev => [...prev, {
-          sender: 'System',
-          text: `Error running tool ${tool}: ${errorText}`,
-          timestamp: new Date().toLocaleTimeString()
-        }]);
-        return;
-      }
-
-      const data = await res.json();
-      setMessages(prev => [...prev, {
+      const data = await api.runTool({ tool, code, gemini_key: settings.geminiKey });
+      chat.pushMessage({
         sender: 'AI Tool',
         text: typeof data?.result === 'string' ? data.result : JSON.stringify(data),
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-      }]);
+      });
     } catch (error) {
-       // ... error handling
+      chat.pushSystemMessage(`Error running tool ${tool}: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
       setIsLoading(false);
     }
@@ -227,7 +84,9 @@ function App() {
   const handleEditorDidMount = (editor: MonacoEditor.editor.IStandaloneCodeEditor, monaco: typeof MonacoEditor) => {
     editorRef.current = editor;
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
-      void saveFile();
+      void workspace.saveFile({
+        getContent: () => (editorRef.current ? editorRef.current.getValue() : workspace.fileContent)
+      });
     });
 
     const completionProvider = {
@@ -241,28 +100,19 @@ function App() {
         const offset = model.getOffsetAt(position);
 
         try {
-          const res = await fetch(`${API_BASE}/api/completion`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              code: fullText,
-              cursor_offset: offset,
-              gemini_key: geminiKeyRef.current,
-              deepseek_key: deepseekKeyRef.current,
-              position: offset, // Updated backend expects position
-              language: model.getLanguageId()
-            })
+          const data = await api.completion({
+            code: fullText,
+            language: model.getLanguageId(),
+            position: offset,
+            gemini_key: geminiKeyRef.current,
+            deepseek_key: deepseekKeyRef.current
           });
-          
-          if (res.ok) {
-            const data = await res.json();
-            if (data.completion) {
-               return {
-                 items: [{
-                   insertText: data.completion
-                 }]
-               };
-            }
+          if (data.completion) {
+            return {
+              items: [{
+                insertText: data.completion
+              }]
+            };
           }
         } catch (e) {
           console.error(e);
@@ -298,19 +148,19 @@ function App() {
     
     await AgentLoop.runTask(task, {
       apiBase: API_BASE,
-      geminiKey,
-      deepseekKey,
-      githubToken,
-      repoUrl,
+      geminiKey: settings.geminiKey,
+      deepseekKey: settings.deepseekKey,
+      githubToken: settings.githubToken,
+      repoUrl: settings.repoUrl,
       onLog: (msg) => setAgentLogs(prev => [...prev, msg]),
       context: {
         diagnostics,
-        currentFile: activeFile || undefined,
-        currentFileContent: fileContent
+        currentFile: workspace.activeFile || undefined,
+        currentFileContent: workspace.fileContent
       },
       onSuccess: (filename, content) => {
-        const isCurrent = activeFile && (activeFile.endsWith(filename) || activeFile === filename);
-        const original = isCurrent ? fileContent : ''; 
+        const isCurrent = workspace.activeFile && (workspace.activeFile.endsWith(filename) || workspace.activeFile === filename);
+        const original = isCurrent ? workspace.fileContent : ''; 
         setDiffOriginal(original);
         setDiffModified(content);
         setDiffFilename(filename);
@@ -319,94 +169,26 @@ function App() {
     });
   };
 
-  const saveSettings = () => {
-    localStorage.setItem('gemini_key', geminiKey);
-    localStorage.setItem('deepseek_key', deepseekKey);
-    localStorage.setItem('github_token', githubToken);
-    localStorage.setItem('repo_url', repoUrl);
-    setShowSettings(false);
-  };
-
-  const sendMessage = async () => {
-    if (!input.trim()) { return; }
-    const userMsg: Message = {
-      sender: 'You',
-      text: input,
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-    };
-    setMessages(prev => [...prev, userMsg]);
-    setInput('');
-    setIsLoading(true);
-
-    try {
-      const res = await fetch(`${API_BASE}/api/chat`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          message: userMsg.text,
-          model: selectedModel,
-          repo_url: repoUrl,
-          gemini_key: geminiKey,
-          deepseek_key: deepseekKey,
-          github_token: githubToken,
-          history: messages.map(m => ({ role: m.sender === 'You' ? 'user' : 'model', content: m.text }))
-        })
-      });
-
-      if (!res.ok) {
-        const errorText = await readErrorText(res);
-        setMessages(prev => [...prev, {
-          sender: 'System',
-          text: `Error: ${errorText}`,
-          timestamp: new Date().toLocaleTimeString()
-        }]);
-        return;
-      }
-
-      const data = await res.json();
-      setMessages(prev => [...prev, toMessage(data, selectedModel === 'deepseek' ? 'DeepSeek' : 'Gemini')]);
-    } catch (error) {
-       // Error handling
-    } finally {
-      setIsLoading(false);
-    }
-  };
+  const sendMessage = () => chat.sendMessage({
+    geminiKey: settings.geminiKey,
+    deepseekKey: settings.deepseekKey,
+    setIsLoading
+  });
 
   const cloneRepo = async () => {
-    if (!repoUrl) {
+    if (!settings.repoUrl) {
       alert("Please enter a GitHub repository URL.");
       return;
     }
     setIsLoading(true);
-    setMessages(prev => [...prev, {
-      sender: 'System',
-      text: `Cloning ${repoUrl}...`,
-      timestamp: new Date().toLocaleTimeString()
-    }]);
+    chat.pushSystemMessage(`Cloning ${settings.repoUrl}...`);
 
     try {
-      const res = await fetch(`${API_BASE}/api/git/clone`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ repo_url: repoUrl })
-      });
-      const data = await res.json();
-      if (res.ok) {
-        setMessages(prev => [...prev, {
-          sender: 'System',
-          text: `Clone successful: ${data.message || 'Done'}`,
-          timestamp: new Date().toLocaleTimeString()
-        }]);
-        fetchFiles(); 
-      } else {
-        setMessages(prev => [...prev, {
-          sender: 'System',
-          text: `Clone failed: ${data.detail || data.message}`,
-          timestamp: new Date().toLocaleTimeString()
-        }]);
-      }
-    } catch (error) {
-       // Error handling
+      const data = await api.cloneRepo({ repo_url: settings.repoUrl });
+      chat.pushSystemMessage(`Clone successful: ${data.path}`);
+      workspace.fetchFiles();
+    } catch (error: unknown) {
+      chat.pushSystemMessage(`Clone failed: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
       setIsLoading(false);
     }
@@ -416,12 +198,9 @@ function App() {
     const file = event.target.files?.[0];
     if (!file) return;
     setIsLoading(true);
-    // ... same logic as before but just fetch call
-    const formData = new FormData();
-    formData.append('file', file);
     try {
-       await fetch(`${API_BASE}/api/fs/upload`, { method: 'POST', body: formData });
-       fetchFiles();
+      await api.uploadFile(file);
+      workspace.fetchFiles();
     } catch {}
     setIsLoading(false);
   };
@@ -429,11 +208,11 @@ function App() {
   return (
     <div className="flex h-screen w-screen bg-background text-foreground overflow-hidden">
       <Sidebar 
-        files={files}
-        activeFile={activeFile}
-        onFileClick={openFile}
-        onRefresh={fetchFiles}
-        onSettingsClick={() => setShowSettings(true)}
+        files={workspace.files}
+        activeFile={workspace.activeFile}
+        onFileClick={workspace.openFile}
+        onRefresh={workspace.fetchFiles}
+        onSettingsClick={() => settings.setShowSettings(true)}
         onCloneClick={cloneRepo}
         onUploadClick={uploadFile}
         className="w-64 flex-shrink-0"
@@ -441,13 +220,13 @@ function App() {
 
       <div className="flex-1 flex min-w-0">
         <EditorPanel 
-          activeFile={activeFile}
-          fileContent={fileContent}
-          setFileContent={setFileContent}
-          onSave={saveFile}
+          activeFile={workspace.activeFile}
+          fileContent={workspace.fileContent}
+          setFileContent={workspace.setFileContent}
+          onSave={() => workspace.saveFile({ getContent: () => (editorRef.current ? editorRef.current.getValue() : workspace.fileContent) })}
           onRunTool={runTool}
           onOpenAgent={() => setShowAgentTaskModal(true)}
-          onOpenVSCode={openInVSCode}
+          onOpenVSCode={workspace.openInVSCode}
           showTerminal={showTerminal}
           setShowTerminal={setShowTerminal}
           agentLogs={agentLogs}
@@ -457,29 +236,29 @@ function App() {
         />
 
         <ChatInterface 
-          messages={messages}
+          messages={chat.messages}
           isLoading={isLoading}
-          input={input}
-          setInput={setInput}
+          input={chat.input}
+          setInput={chat.setInput}
           onSend={sendMessage}
-          selectedModel={selectedModel}
-          setSelectedModel={setSelectedModel}
+          selectedModel={chat.selectedModel}
+          setSelectedModel={chat.setSelectedModel}
           className="w-96 flex-shrink-0"
         />
       </div>
 
-      {showSettings && (
+      {settings.showSettings && (
         <SettingsModal 
-          onClose={() => setShowSettings(false)}
-          geminiKey={geminiKey}
-          setGeminiKey={setGeminiKey}
-          deepseekKey={deepseekKey}
-          setDeepseekKey={setDeepseekKey}
-          githubToken={githubToken}
-          setGithubToken={setGithubToken}
-          repoUrl={repoUrl}
-          setRepoUrl={setRepoUrl}
-          onSave={saveSettings}
+          onClose={() => settings.setShowSettings(false)}
+          geminiKey={settings.geminiKey}
+          setGeminiKey={settings.setGeminiKey}
+          deepseekKey={settings.deepseekKey}
+          setDeepseekKey={settings.setDeepseekKey}
+          githubToken={settings.githubToken}
+          setGithubToken={settings.setGithubToken}
+          repoUrl={settings.repoUrl}
+          setRepoUrl={settings.setRepoUrl}
+          onSave={settings.saveSettings}
         />
       )}
 
@@ -518,7 +297,7 @@ function App() {
           modified={diffModified}
           filename={diffFilename}
           onAccept={() => {
-            setFileContent(diffModified);
+            workspace.setFileContent(diffModified);
             setShowDiff(false);
           }}
           onReject={() => setShowDiff(false)}

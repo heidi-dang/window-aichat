@@ -14,3 +14,4 @@ python-jose[cryptography]
 httpx
 python-dotenv
 jose
+tiktoken
