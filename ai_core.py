@@ -9,6 +9,7 @@ from cryptography.fernet import Fernet
 import logging
 import threading
 
+
 def setup_logging():
     log_dir = os.path.join(os.path.expanduser("~"), ".aichatdesktop")
     os.makedirs(log_dir, exist_ok=True)

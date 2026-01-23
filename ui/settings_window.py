@@ -93,12 +93,16 @@ class SettingsWindow:
         )
         self.gemini_model = ttk.Combobox(
             gemini_frame,
-            values=["gemini-1.5-flash", "gemini-1.5-pro-latest", "gemini-1.0-pro"], # Updated models
+            values=[
+                "gemini-1.5-flash",
+                "gemini-1.5-pro-latest",
+                "gemini-1.0-pro",
+            ],  # Updated models
             state="readonly",
             font=("Segoe UI", 9),
         )
         self.gemini_model.pack(fill=tk.X, pady=(2, 0))
-        self.gemini_model.set("gemini-1.5-flash") # Default to a stable model
+        self.gemini_model.set("gemini-1.5-flash")  # Default to a stable model
 
         tk.Label(
             gemini_frame,
@@ -143,7 +147,9 @@ class SettingsWindow:
         deepseek_btn = tk.Button(
             deepseek_frame,
             text="Get DeepSeek API Key",
-            command=lambda: webbrowser.open("https://platform.deepseek.com/api-keys"), # Updated URL
+            command=lambda: webbrowser.open(
+                "https://platform.deepseek.com/api-keys"
+            ),  # Updated URL
             bg="#00a67e",
             fg="white",
             font=("Segoe UI", 9),
@@ -282,8 +288,12 @@ class SettingsWindow:
                     results.append("✓ Gemini: Connected")
                     logger.info("Gemini connection test successful.")
                 else:
-                    results.append(f"✗ Gemini: Unexpected response: {response.text[:50]}")
-                    logger.warning(f"Gemini connection test failed: Unexpected response.")
+                    results.append(
+                        f"✗ Gemini: Unexpected response: {response.text[:50]}"
+                    )
+                    logger.warning(
+                        f"Gemini connection test failed: Unexpected response."
+                    )
             except Exception as e:
                 results.append(f"✗ Gemini: {str(e)[:50]}")
                 logger.error(f"Gemini connection test failed: {e}", exc_info=True)
@@ -314,7 +324,9 @@ class SettingsWindow:
                     logger.info("DeepSeek connection test successful.")
                 else:
                     results.append(f"✗ DeepSeek: HTTP {response.status_code}")
-                    logger.error(f"DeepSeek connection test failed: HTTP {response.status_code} - {response.text[:50]}")
+                    logger.error(
+                        f"DeepSeek connection test failed: HTTP {response.status_code} - {response.text[:50]}"
+                    )
             except requests.exceptions.Timeout:
                 results.append("✗ DeepSeek: Request timed out")
                 logger.error("DeepSeek connection test failed: Request timed out.")

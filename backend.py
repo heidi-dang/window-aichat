@@ -38,7 +38,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 # --- Logging Setup ---
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
 logger = logging.getLogger(__name__)
 
 # --- 2. Import Existing Logic ---
@@ -54,6 +56,7 @@ except ImportError as e:
 
 # Load environment variables from .env file
 from dotenv import load_dotenv
+
 load_dotenv()
 
 # --- 3. App Configuration ---
@@ -77,9 +80,12 @@ os.makedirs(WORKSPACE_DIR, exist_ok=True)
 
 # --- 3.1 Database Setup (SQLite) ---
 SQLALCHEMY_DATABASE_URL = "sqlite:///./aichat.db"
-engine = create_engine(SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False})
+engine = create_engine(
+    SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False}
+)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
+
 
 # --- 3.2 Database Models ---
 class User(Base):
@@ -88,10 +94,13 @@ class User(Base):
     email = Column(String, unique=True, index=True)
     provider = Column(String)  # google, github, apple
     provider_id = Column(String, index=True)
-    created_at = Column(DateTime, default=datetime.now) # Corrected to datetime.now (callable)
+    created_at = Column(
+        DateTime, default=datetime.now
+    )  # Corrected to datetime.now (callable)
 
     chats = relationship("ChatMessage", back_populates="user")
     files = relationship("FileRecord", back_populates="user")
+
 
 class ChatMessage(Base):
     __tablename__ = "chat_messages"
@@ -99,9 +108,12 @@ class ChatMessage(Base):
     user_id = Column(Integer, ForeignKey("users.id"))
     sender = Column(String)
     text = Column(Text)
-    timestamp = Column(DateTime, default=datetime.now) # Corrected to datetime.now (callable)
+    timestamp = Column(
+        DateTime, default=datetime.now
+    )  # Corrected to datetime.now (callable)
 
     user = relationship("User", back_populates="chats")
+
 
 class FileRecord(Base):
     __tablename__ = "files"
@@ -109,9 +121,12 @@ class FileRecord(Base):
     user_id = Column(Integer, ForeignKey("users.id"))
     filename = Column(String)
     file_path = Column(String)
-    uploaded_at = Column(DateTime, default=datetime.now) # Corrected to datetime.now (callable)
+    uploaded_at = Column(
+        DateTime, default=datetime.now
+    )  # Corrected to datetime.now (callable)
 
     user = relationship("User", back_populates="files")
+
 
 # Create Tables
 Base.metadata.create_all(bind=engine)
@@ -129,7 +144,7 @@ OAUTH_CONFIG = {
         "auth_url": "https://accounts.google.com/o/oauth2/v2/auth",
         "token_url": "https://oauth2.googleapis.com/token",
         "user_info_url": "https://www.googleapis.com/oauth2/v3/userinfo",
-        "scope": "openid email profile"
+        "scope": "openid email profile",
     },
     "github": {
         "client_id": os.getenv("GITHUB_CLIENT_ID", ""),
@@ -137,7 +152,7 @@ OAUTH_CONFIG = {
         "auth_url": "https://github.com/login/oauth/authorize",
         "token_url": "https://github.com/login/oauth/access_token",
         "user_info_url": "https://api.github.com/user",
-        "scope": "user:email"
+        "scope": "user:email",
     },
     "apple": {
         # Apple is more complex, usually requires specific library for Sign In with Apple
@@ -146,9 +161,10 @@ OAUTH_CONFIG = {
         "client_secret": os.getenv("APPLE_CLIENT_SECRET", ""),
         "auth_url": "https://appleid.apple.com/auth/authorize",
         "token_url": "https://appleid.apple.com/auth/token",
-        "scope": "name email"
-    }
+        "scope": "name email",
+    },
 }
+
 
 def get_db():
     db = SessionLocal()
@@ -156,6 +172,7 @@ def get_db():
         yield db
     finally:
         db.close()
+
 
 # --- 4. Data Models ---
 class ChatRequest(BaseModel):
@@ -190,6 +207,7 @@ class ToolRequest(BaseModel):
 
 class CloneRequest(BaseModel):
     repo_url: str
+
 
 class Token(BaseModel):
     access_token: str
@@ -251,6 +269,7 @@ def create_access_token(data: dict):
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
 
+
 def get_user_from_token(token: str, db: Session):
     """
     Decodes a JWT token and returns the corresponding user from the database.
@@ -267,6 +286,7 @@ def get_user_from_token(token: str, db: Session):
 
     user = db.query(User).filter(User.email == email).first()
     return user
+
 
 async def get_current_user(request: Request, db: Session = Depends(get_db)):
     """
@@ -286,6 +306,7 @@ async def get_current_user(request: Request, db: Session = Depends(get_db)):
 async def health_check():
     return {"status": "ok", "service": "AI Chat Backend"}
 
+
 # --- Auth Endpoints ---
 @app.get("/auth/login/{provider}")
 async def login(provider: str):
@@ -295,23 +316,29 @@ async def login(provider: str):
     config = OAUTH_CONFIG[provider]
     if not config["client_id"]:
         logger.warning(f"{provider} Client ID not configured in environment variables.")
-        return {"error": f"{provider} Client ID not configured in environment variables"}
+        return {
+            "error": f"{provider} Client ID not configured in environment variables"
+        }
 
     # Use environment variable for redirect_uri, fallback to localhost for dev
-    redirect_uri = os.getenv("OAUTH_REDIRECT_URI", f"http://localhost:8000/auth/callback/{provider}")
+    redirect_uri = os.getenv(
+        "OAUTH_REDIRECT_URI", f"http://localhost:8000/auth/callback/{provider}"
+    )
 
     params = {
         "client_id": config["client_id"],
         "response_type": "code",
         "scope": config["scope"],
         "redirect_uri": redirect_uri,
-        "access_type": "offline"
+        "access_type": "offline",
     }
 
     # Construct URL
     import urllib.parse
+
     url = f"{config['auth_url']}?{urllib.parse.urlencode(params)}"
     return {"url": url}
+
 
 @app.get("/auth/callback/{provider}")
 async def auth_callback(provider: str, code: str, db: Session = Depends(get_db)):
@@ -321,7 +348,9 @@ async def auth_callback(provider: str, code: str, db: Session = Depends(get_db))
     config = OAUTH_CONFIG[provider]
 
     # Use environment variable for redirect_uri, fallback to localhost for dev
-    redirect_uri = os.getenv("OAUTH_REDIRECT_URI", f"http://localhost:8000/auth/callback/{provider}")
+    redirect_uri = os.getenv(
+        "OAUTH_REDIRECT_URI", f"http://localhost:8000/auth/callback/{provider}"
+    )
 
     # Exchange code for token
     async with httpx.AsyncClient() as client:
@@ -341,13 +370,17 @@ async def auth_callback(provider: str, code: str, db: Session = Depends(get_db))
         access_token = token_data.get("access_token")
 
         if not access_token:
-            logger.error(f"Failed to retrieve access token for {provider}: {token_data.get('error_description') or token_data.get('error')}")
-            raise HTTPException(status_code=400, detail="Failed to retrieve access token")
+            logger.error(
+                f"Failed to retrieve access token for {provider}: {token_data.get('error_description') or token_data.get('error')}"
+            )
+            raise HTTPException(
+                status_code=400, detail="Failed to retrieve access token"
+            )
 
         # Get User Info
-        user_info_res = await client.get(config["user_info_url"], headers={
-            "Authorization": f"Bearer {access_token}"
-        })
+        user_info_res = await client.get(
+            config["user_info_url"], headers={"Authorization": f"Bearer {access_token}"}
+        )
         user_data = user_info_res.json()
 
         # Normalize email/id based on provider
@@ -355,24 +388,31 @@ async def auth_callback(provider: str, code: str, db: Session = Depends(get_db))
         provider_id = str(user_data.get("id") or user_data.get("sub"))
 
         if not email:
-             # Fallback for GitHub if email is private or not provided by default user info endpoint
-             # Attempt to fetch from /user/emails for GitHub
-             if provider == "github":
-                 emails_res = await client.get("https://api.github.com/user/emails", headers={
-                     "Authorization": f"Bearer {access_token}",
-                     "Accept": "application/vnd.github.v3+json"
-                 })
-                 emails_data = emails_res.json()
-                 primary_email = next((e['email'] for e in emails_data if e['primary'] and e['verified']), None)
-                 if primary_email:
-                     email = primary_email
-                 else:
-                     logger.warning(f"GitHub user {provider_id} has no public or primary verified email. Using placeholder.")
-                     email = f"{provider_id}@{provider}.placeholder.com"
-             else:
-                 logger.warning(f"User from {provider} has no email. Using placeholder.")
-                 email = f"{provider_id}@{provider}.placeholder.com"
-
+            # Fallback for GitHub if email is private or not provided by default user info endpoint
+            # Attempt to fetch from /user/emails for GitHub
+            if provider == "github":
+                emails_res = await client.get(
+                    "https://api.github.com/user/emails",
+                    headers={
+                        "Authorization": f"Bearer {access_token}",
+                        "Accept": "application/vnd.github.v3+json",
+                    },
+                )
+                emails_data = emails_res.json()
+                primary_email = next(
+                    (e["email"] for e in emails_data if e["primary"] and e["verified"]),
+                    None,
+                )
+                if primary_email:
+                    email = primary_email
+                else:
+                    logger.warning(
+                        f"GitHub user {provider_id} has no public or primary verified email. Using placeholder."
+                    )
+                    email = f"{provider_id}@{provider}.placeholder.com"
+            else:
+                logger.warning(f"User from {provider} has no email. Using placeholder.")
+                email = f"{provider_id}@{provider}.placeholder.com"
 
         # Save/Update User
         user = db.query(User).filter(User.email == email).first()
@@ -393,6 +433,7 @@ async def auth_callback(provider: str, code: str, db: Session = Depends(get_db))
         # Use environment variable for frontend_url, fallback to localhost for dev
         frontend_url = os.getenv("FRONTEND_URL", "http://localhost:5173")
         return RedirectResponse(url=f"{frontend_url}/login?token={jwt_token}")
+
 
 @app.get("/api/processes")
 async def list_processes():
@@ -441,15 +482,15 @@ async def chat_endpoint(
             # or you could modify the frontend to handle a JSON object with both.
             # Here we combine them textually.
             responses = client.ask_both(full_prompt)
-            response_text = (
-                f"**Gemini:**\n{responses['gemini']}\n\n---\n\n**DeepSeek:**\n{responses['deepseek']}"
-            )
+            response_text = f"**Gemini:**\n{responses['gemini']}\n\n---\n\n**DeepSeek:**\n{responses['deepseek']}"
             sender = "Gemini & DeepSeek"
 
         # 5. Save to Database if user is logged in
         if current_user:
             # Save User Message
-            user_msg = ChatMessage(user_id=current_user.id, sender="You", text=req.message)
+            user_msg = ChatMessage(
+                user_id=current_user.id, sender="You", text=req.message
+            )
             db.add(user_msg)
 
             # Save AI Response
@@ -459,13 +500,15 @@ async def chat_endpoint(
             db.add(ai_msg)
 
             db.commit()
-            db.refresh(user_msg) # Refresh to get generated timestamp
-            db.refresh(ai_msg) # Refresh to get generated timestamp
+            db.refresh(user_msg)  # Refresh to get generated timestamp
+            db.refresh(ai_msg)  # Refresh to get generated timestamp
 
         return {
             "sender": sender,
             "text": response_text,
-            "timestamp": datetime.now().strftime("%H:%M"), # Use current time for API response
+            "timestamp": datetime.now().strftime(
+                "%H:%M"
+            ),  # Use current time for API response
         }
 
     except Exception as e:
@@ -476,7 +519,9 @@ async def chat_endpoint(
 @app.get("/api/fs/list")
 async def list_files(current_user: User = Depends(get_current_user)):
     if not current_user:
-        raise HTTPException(status_code=401, detail="Authentication required to list files")
+        raise HTTPException(
+            status_code=401, detail="Authentication required to list files"
+        )
 
     files = []
 
@@ -486,7 +531,12 @@ async def list_files(current_user: User = Depends(get_current_user)):
 
     for root, dirs, filenames in os.walk(target_dir):
         # Exclude hidden directories and common build/env folders
-        dirs[:] = [d for d in dirs if not d.startswith('.') and d not in ['node_modules', '__pycache__', 'venv', 'dist', 'build']]
+        dirs[:] = [
+            d
+            for d in dirs
+            if not d.startswith(".")
+            and d not in ["node_modules", "__pycache__", "venv", "dist", "build"]
+        ]
 
         rel_path = os.path.relpath(root, target_dir)
         if rel_path == ".":
@@ -502,7 +552,7 @@ async def list_files(current_user: User = Depends(get_current_user)):
             )
         for f in filenames:
             # Exclude common temporary/config files
-            if not f.startswith('.') and not f.endswith(('~', '.bak', '.tmp')):
+            if not f.startswith(".") and not f.endswith(("~", ".bak", ".tmp")):
                 files.append(
                     {
                         "name": f,
@@ -518,16 +568,20 @@ async def read_file(
     req: FileReadRequest, current_user: User = Depends(get_current_user)
 ):
     if not current_user:
-        raise HTTPException(status_code=401, detail="Authentication required to read files")
+        raise HTTPException(
+            status_code=401, detail="Authentication required to read files"
+        )
 
     base_dir = os.path.join(WORKSPACE_DIR, str(current_user.id))
-    os.makedirs(base_dir, exist_ok=True) # Ensure user's base dir exists
+    os.makedirs(base_dir, exist_ok=True)  # Ensure user's base dir exists
 
     safe_path = os.path.normpath(os.path.join(base_dir, req.path))
 
     # Security check: ensure path is within the user's workspace
     if not safe_path.startswith(base_dir):
-        logger.warning(f"User {current_user.email} attempted to access file outside workspace: {req.path}")
+        logger.warning(
+            f"User {current_user.email} attempted to access file outside workspace: {req.path}"
+        )
         raise HTTPException(status_code=403, detail="Access denied")
 
     if not os.path.exists(safe_path):
@@ -538,7 +592,10 @@ async def read_file(
             content = f.read()
         return {"content": content}
     except Exception as e:
-        logger.error(f"Error reading file {req.path} for user {current_user.email}: {e}", exc_info=True)
+        logger.error(
+            f"Error reading file {req.path} for user {current_user.email}: {e}",
+            exc_info=True,
+        )
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -547,14 +604,18 @@ async def write_file(
     req: FileWriteRequest, current_user: User = Depends(get_current_user)
 ):
     if not current_user:
-        raise HTTPException(status_code=401, detail="Authentication required to write files")
+        raise HTTPException(
+            status_code=401, detail="Authentication required to write files"
+        )
 
     base_dir = os.path.join(WORKSPACE_DIR, str(current_user.id))
     os.makedirs(base_dir, exist_ok=True)
 
     safe_path = os.path.normpath(os.path.join(base_dir, req.path))
     if not safe_path.startswith(base_dir):
-        logger.warning(f"User {current_user.email} attempted to write file outside workspace: {req.path}")
+        logger.warning(
+            f"User {current_user.email} attempted to write file outside workspace: {req.path}"
+        )
         raise HTTPException(status_code=403, detail="Access denied")
 
     try:
@@ -563,14 +624,19 @@ async def write_file(
             f.write(req.content)
         return {"status": "ok"}
     except Exception as e:
-        logger.error(f"Error writing file {req.path} for user {current_user.email}: {e}", exc_info=True)
+        logger.error(
+            f"Error writing file {req.path} for user {current_user.email}: {e}",
+            exc_info=True,
+        )
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/api/tool")
 async def run_tool(req: ToolRequest, current_user: User = Depends(get_current_user)):
     if not current_user:
-        raise HTTPException(status_code=401, detail="Authentication required to use AI tools")
+        raise HTTPException(
+            status_code=401, detail="Authentication required to use AI tools"
+        )
 
     # Create a temporary client using the key provided in request (or default)
     client = get_ai_client(ChatRequest(message="", gemini_key=req.gemini_key))
@@ -580,11 +646,11 @@ async def run_tool(req: ToolRequest, current_user: User = Depends(get_current_us
 
 
 @app.post("/api/git/clone")
-async def clone_repo(
-    req: CloneRequest, current_user: User = Depends(get_current_user)
-):
+async def clone_repo(req: CloneRequest, current_user: User = Depends(get_current_user)):
     if not current_user:
-        raise HTTPException(status_code=401, detail="Authentication required to clone repositories")
+        raise HTTPException(
+            status_code=401, detail="Authentication required to clone repositories"
+        )
 
     try:
         base_dir = os.path.join(WORKSPACE_DIR, str(current_user.id))
@@ -606,12 +672,17 @@ async def clone_repo(
         )
 
         if process.returncode != 0:
-            logger.error(f"Git clone failed for user {current_user.email}, repo {req.repo_url}: {process.stderr}")
+            logger.error(
+                f"Git clone failed for user {current_user.email}, repo {req.repo_url}: {process.stderr}"
+            )
             raise Exception(f"Git clone failed: {process.stderr}")
 
         return {"status": "ok", "message": f"Cloned '{repo_name}' successfully."}
     except Exception as e:
-        logger.error(f"Error cloning repo {req.repo_url} for user {current_user.email}: {e}", exc_info=True)
+        logger.error(
+            f"Error cloning repo {req.repo_url} for user {current_user.email}: {e}",
+            exc_info=True,
+        )
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -622,7 +693,9 @@ async def upload_file(
     current_user: User = Depends(get_current_user),
 ):
     if not current_user:
-        raise HTTPException(status_code=401, detail="Authentication required to upload files")
+        raise HTTPException(
+            status_code=401, detail="Authentication required to upload files"
+        )
 
     try:
         base_dir = os.path.join(WORKSPACE_DIR, str(current_user.id))
@@ -636,9 +709,7 @@ async def upload_file(
 
         # If zip, extract it
         if file.filename.endswith(".zip"):
-            extract_dir = os.path.join(
-                base_dir, os.path.splitext(file.filename)[0]
-            )
+            extract_dir = os.path.join(base_dir, os.path.splitext(file.filename)[0])
             with zipfile.ZipFile(file_path, "r") as zip_ref:
                 zip_ref.extractall(extract_dir)
             os.remove(file_path)  # Always remove zip after extraction for cleanliness
@@ -647,14 +718,19 @@ async def upload_file(
             message = f"Uploaded '{file.filename}'."
 
         # Save metadata to DB
-        db_file = FileRecord(user_id=current_user.id, filename=file.filename, file_path=file_path)
+        db_file = FileRecord(
+            user_id=current_user.id, filename=file.filename, file_path=file_path
+        )
         db.add(db_file)
         db.commit()
         db.refresh(db_file)
 
         return {"status": "ok", "message": message}
     except Exception as e:
-        logger.error(f"Error uploading file {file.filename} for user {current_user.email}: {e}", exc_info=True)
+        logger.error(
+            f"Error uploading file {file.filename} for user {current_user.email}: {e}",
+            exc_info=True,
+        )
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -676,15 +752,18 @@ async def terminal_websocket(
 
     # Determine user's workspace for terminal
     user_workspace_dir = os.path.join(WORKSPACE_DIR, str(user.id))
-    os.makedirs(user_workspace_dir, exist_ok=True) # Ensure user's workspace exists
+    os.makedirs(user_workspace_dir, exist_ok=True)  # Ensure user's workspace exists
 
     # Check for PTY support (Linux/macOS only)
     try:
         import pty
+
         use_pty = True
     except ImportError:
         use_pty = False
-        logger.warning("PTY module not available. Falling back to Windows subprocess or limited shell.")
+        logger.warning(
+            "PTY module not available. Falling back to Windows subprocess or limited shell."
+        )
 
     if use_pty:
         # Spawn Shell with TERM environment variable for colors
@@ -694,8 +773,8 @@ async def terminal_websocket(
         # Important: Set TERM so tools know to output color
         env = os.environ.copy()
         env["TERM"] = "xterm-256color"
-        env["PWD"] = user_workspace_dir # Set initial working directory
-        env["HOME"] = user_workspace_dir # Set HOME for user-specific configs
+        env["PWD"] = user_workspace_dir  # Set initial working directory
+        env["HOME"] = user_workspace_dir  # Set HOME for user-specific configs
 
         process = subprocess.Popen(
             [shell],
@@ -705,7 +784,7 @@ async def terminal_websocket(
             stderr=slave_fd,
             universal_newlines=True,
             env=env,
-            cwd=user_workspace_dir # Set current working directory for the shell
+            cwd=user_workspace_dir,  # Set current working directory for the shell
         )
 
         os.close(slave_fd)  # Close slave in parent
@@ -715,7 +794,9 @@ async def terminal_websocket(
         async def send_output():
             try:
                 # Read from PTY and send to WebSocket
-                output = await loop.run_in_executor(None, lambda: os.read(master_fd, 10240))
+                output = await loop.run_in_executor(
+                    None, lambda: os.read(master_fd, 10240)
+                )
                 if output:
                     await websocket.send_text(output.decode(errors="ignore"))
                 else:
@@ -723,7 +804,9 @@ async def terminal_websocket(
                     logger.info(f"Terminal process for user {user.email} exited.")
                     await websocket.close()
             except Exception as e:
-                logger.error(f"Error reading from PTY for user {user.email}: {e}", exc_info=True)
+                logger.error(
+                    f"Error reading from PTY for user {user.email}: {e}", exc_info=True
+                )
                 await websocket.close(code=1011, reason="Internal server error")
 
         # Register reader for PTY output
@@ -742,7 +825,7 @@ async def terminal_websocket(
             loop.remove_reader(master_fd)
             process.kill()
             os.close(master_fd)
-    else: # Windows fallback or PTY not available
+    else:  # Windows fallback or PTY not available
         if os.name == "nt":
             try:
                 shell = os.environ.get("COMSPEC", "cmd.exe")
@@ -751,22 +834,26 @@ async def terminal_websocket(
                     stdin=asyncio.subprocess.PIPE,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
-                    cwd=user_workspace_dir # Set current working directory for the shell
+                    cwd=user_workspace_dir,  # Set current working directory for the shell
                 )
 
                 async def read_stream(stream, stream_name):
                     try:
                         while True:
                             data = await stream.read(1024)
-                            if not data: break
+                            if not data:
+                                break
                             try:
                                 text = data.decode("cp437")
                             except:
                                 text = data.decode("utf-8", errors="ignore")
                             await websocket.send_text(text)
                     except Exception as e:
-                        logger.error(f"Error reading from {stream_name} stream for user {user.email}: {e}", exc_info=True)
-                        pass # Don't close websocket on stream error, let main loop handle it
+                        logger.error(
+                            f"Error reading from {stream_name} stream for user {user.email}: {e}",
+                            exc_info=True,
+                        )
+                        pass  # Don't close websocket on stream error, let main loop handle it
 
                 asyncio.create_task(read_stream(process.stdout, "stdout"))
                 asyncio.create_task(read_stream(process.stderr, "stderr"))
@@ -779,18 +866,27 @@ async def terminal_websocket(
                 except WebSocketDisconnect:
                     logger.info(f"WebSocket disconnected for user {user.email}.")
                 except Exception as e:
-                    logger.error(f"Terminal error for user {user.email}: {e}", exc_info=True)
+                    logger.error(
+                        f"Terminal error for user {user.email}: {e}", exc_info=True
+                    )
                 finally:
-                    try: process.terminate()
-                    except: pass
+                    try:
+                        process.terminate()
+                    except:
+                        pass
                 return
             except Exception as e:
-                logger.error(f"Error starting Windows terminal for user {user.email}: {e}", exc_info=True)
+                logger.error(
+                    f"Error starting Windows terminal for user {user.email}: {e}",
+                    exc_info=True,
+                )
                 await websocket.send_text(f"Error starting Windows terminal: {e}\r\n")
                 await websocket.close(code=1011, reason="Internal server error")
                 return
         else:
-            logger.error("Backend terminal requires Linux/macOS (pty module missing) or Windows (cmd.exe).")
+            logger.error(
+                "Backend terminal requires Linux/macOS (pty module missing) or Windows (cmd.exe)."
+            )
             await websocket.send_text(
                 "Error: Backend terminal requires Linux/macOS (pty module missing) or Windows (cmd.exe).\r\n"
             )

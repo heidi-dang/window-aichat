@@ -18,7 +18,9 @@ try:
     PYGMENTS_AVAILABLE = True
 except ImportError:
     PYGMENTS_AVAILABLE = False
-    logger.warning("Pygments not installed. Falling back to regex-based syntax highlighting.")
+    logger.warning(
+        "Pygments not installed. Falling back to regex-based syntax highlighting."
+    )
 
 
 # --- Helper Classes for Code Editor with Line Numbers ---
@@ -320,9 +322,7 @@ class CodeChatWindow(tk.Toplevel):
             text_widget.tag_configure("Token.Name.Other", foreground="#000000")
             text_widget.tag_configure("Token.Name.Tag", foreground="#800000")
             text_widget.tag_configure("Token.Name.Variable", foreground="#000000")
-            text_widget.tag_configure(
-                "Token.Name.Variable.Class", foreground="#000000"
-            )
+            text_widget.tag_configure("Token.Name.Variable.Class", foreground="#000000")
             text_widget.tag_configure(
                 "Token.Name.Variable.Global", foreground="#000000"
             )
