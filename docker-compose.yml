@@ -23,8 +23,8 @@ services:
 
   frontend:
     build:
-      context: ./webapp # Changed build context to webapp directory
-      dockerfile: Dockerfile.frontend
+      context: . # Reverted to root context
+      dockerfile: Dockerfile.frontend # Correct path from root
       args:
         VITE_BACKEND_URL: http://backend:8000 # Pass backend URL as build argument
     container_name: window-aichat-frontend

@@ -8,7 +8,6 @@ WORKDIR /app
 COPY webapp/package*.json ./
 
 # Install dependencies
-# Removed timeout and verbose logging, assuming previous issues are resolved
 RUN npm ci --no-audit --no-fund
 
 # Copy source code
