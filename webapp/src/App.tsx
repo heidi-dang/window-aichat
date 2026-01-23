@@ -67,8 +67,6 @@ function App() {
   const editorRef = useRef<MonacoEditor.editor.IStandaloneCodeEditor | null>(null);
 
   // Panel Visibility State
-  const [showSidebar, setShowSidebar] = useState(true);
-  const [showChat, setShowChat] = useState(true);
   const [showTerminal, setShowTerminal] = useState(false);
   const [activeMobilePanel, setActiveMobilePanel] = useState('editor');
 
@@ -160,6 +158,26 @@ function App() {
         errorMessage = error.message;
       }
       alert(`Failed to save file: ${errorMessage}`);
+    }
+  };
+
+  const openInVSCode = async () => {
+    if (!activeFile) return;
+    try {
+      const res = await fetch(`${API_BASE}/api/system/open-vscode`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: activeFile })
+      });
+      if (res.ok) {
+        console.log('Opened in VS Code');
+      } else {
+        const errorText = await readErrorText(res);
+        alert(`Failed to open VS Code: ${errorText}`);
+      }
+    } catch (error: unknown) {
+      console.error("Failed to open VS Code", error);
+      alert("Failed to open VS Code. Ensure it is installed and in your PATH.");
     }
   };
 
@@ -507,16 +525,6 @@ function App() {
 
   return (
     <div className="app-container">
-      {/* Panel Toggle Buttons */}
-      <div className="panel-toggles">
-        <button onClick={() => setShowSidebar(!showSidebar)} className="toggle-btn">
-          {showSidebar ? '◀ Hide Sidebar' : '▶ Show Sidebar'}
-        </button>
-        <button onClick={() => setShowChat(!showChat)} className="toggle-btn">
-          {showChat ? 'Hide Chat ▶' : '◀ Show Chat'}
-        </button>
-      </div>
-
       {/* Sidebar */}
       <div className={`sidebar ${activeMobilePanel === 'sidebar' ? 'visible' : ''}`} style={{ width: sidebarWidth }} ref={sidebarRef}>
         <div className="sidebar-header">
@@ -604,6 +612,7 @@ function App() {
             <button onClick={() => void runTool('refactor')} title="Refactor Code">🛠 Refactor</button>
             <button onClick={() => void runTool('docs')} title="Generate Docs">📝 Docs</button>
             <button onClick={openAgentModal} title="Run Agent Task">🤖 Agent</button>
+            <button onClick={openInVSCode} title="Open in VS Code" style={{ backgroundColor: '#007acc' }}>Open VS Code</button>
             <button className="primary" onClick={() => void saveFile()} disabled={!activeFile}>💾 Save</button>
           </div>
         </div>
@@ -617,11 +626,13 @@ function App() {
             onMount={handleEditorDidMount}
             onChange={(value) => setFileContent(value || '')}
             options={{
-              minimap: { enabled: false },
+              minimap: { enabled: true },
               fontSize: 14,
               wordWrap: 'on',
               automaticLayout: true,
-              padding: { top: 10 }
+              padding: { top: 10 },
+              scrollBeyondLastLine: false,
+              folding: true,
             }}
           />
         </div>

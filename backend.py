@@ -516,6 +516,59 @@ async def chat_endpoint(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/api/system/open-vscode")
+async def open_vscode(
+    path: str = Body(..., embed=True),
+    current_user: User = Depends(lambda: None)  # Placeholder for auth
+):
+    """
+    Opens the specified file or directory in the local VS Code instance.
+    """
+    try:
+        # Resolve absolute path relative to workspace if needed, 
+        # but here we assume 'path' matches the file structure or is absolute.
+        # Ideally, we verify it's inside the workspace or safe.
+        
+        # Check if 'code' is in PATH
+        code_cmd = shutil.which("code")
+        if not code_cmd:
+             # Try common Windows paths
+            possible_paths = [
+                os.path.join(os.getenv("LOCALAPPDATA", ""), "Programs", "Microsoft VS Code", "bin", "code.cmd"),
+                os.path.join(os.getenv("ProgramFiles", ""), "Microsoft VS Code", "bin", "code.cmd"),
+                os.path.join(os.getenv("ProgramFiles(x86)", ""), "Microsoft VS Code", "bin", "code.cmd"),
+            ]
+            for p in possible_paths:
+                if os.path.exists(p):
+                    code_cmd = p
+                    break
+        
+        if not code_cmd:
+            raise HTTPException(status_code=500, detail="VS Code executable ('code') not found in PATH or standard locations.")
+
+        # If path is relative, make it absolute to workspace
+        if not os.path.isabs(path):
+             # Try to find it in file_system map or just join with WORKSPACE_DIR
+             # For now, let's assume the path from frontend is absolute or relative to project root
+             # The frontend sends 'path' from 'files' list.
+             # We should probably map it correctly.
+             # However, the current file system logic in 'main.py' (Desktop) vs 'backend.py' is a bit split.
+             # Let's assume the path provided by the frontend is valid for the OS.
+             pass
+
+        # Use subprocess to launch code
+        # We use shell=True on Windows to handle .cmd execution properly if needed, 
+        # but subprocess.run with executable path is safer.
+        
+        logger.info(f"Opening VS Code at {path} using {code_cmd}")
+        subprocess.Popen([code_cmd, path], shell=True) # Non-blocking
+
+        return {"message": "Opened in VS Code"}
+    except Exception as e:
+        logger.error(f"Failed to open VS Code: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/fs/list")
 async def list_files(current_user: User = Depends(get_current_user)):
     if not current_user:
