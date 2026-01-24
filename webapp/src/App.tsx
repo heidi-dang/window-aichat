@@ -39,6 +39,23 @@ function asPullRequestFileStatus(value: unknown): PullRequestFile['status'] {
   return 'modified';
 }
 
+function decodeJwt(token: string): Record<string, unknown> | null {
+  try {
+    const payload = token.split('.')[1];
+    if (!payload) return null;
+    const decoded = atob(payload.replace(/-/g, '+').replace(/_/g, '/'));
+    return JSON.parse(decoded) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+function formatExpiry(exp?: number | null): string {
+  if (!exp || !Number.isFinite(exp)) return 'Unknown expiry';
+  const date = new Date(exp * 1000);
+  return date.toLocaleString();
+}
+
 function toPullRequest(value: unknown): PullRequest | null {
   if (!value || typeof value !== 'object') return null;
   const v = value as Record<string, unknown>;
@@ -131,6 +148,15 @@ function App() {
   const [repoUrl, setRepoUrl] = useState(localStorage.getItem('repo_url') || '');
   const [selectedModel, setSelectedModel] = useState('gemini');
   const [showSettings, setShowSettings] = useState(false);
+  const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
+  const [authUsername, setAuthUsername] = useState('');
+  const [authPassword, setAuthPassword] = useState('');
+  const [authToken, setAuthToken] = useState(localStorage.getItem('token') || '');
+  const [authPayload, setAuthPayload] = useState<Record<string, unknown> | null>(decodeJwt(localStorage.getItem('token') || ''));
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [showAuthModal, setShowAuthModal] = useState(false);
+  const [showTokenModal, setShowTokenModal] = useState(false);
+  const [manualToken, setManualToken] = useState('');
 
   // File System & Editor State
   const [files, setFiles] = useState<FileEntry[]>([]);
@@ -168,6 +194,108 @@ function App() {
     { label: 'Fix errors', task: 'Scan the project for TypeScript errors and fix them.' },
     { label: 'Generate docs', task: 'Generate or refresh documentation for the current module.' }
   ];
+
+  const authExpiry = useMemo(() => {
+    const exp = authPayload?.exp;
+    return typeof exp === 'number' ? exp : null;
+  }, [authPayload]);
+
+  const isAuthValid = Boolean(authToken && authPayload && (!authExpiry || authExpiry * 1000 > Date.now()));
+
+  const setToken = (token: string) => {
+    localStorage.setItem('token', token);
+    setAuthToken(token);
+    setAuthPayload(decodeJwt(token));
+  };
+
+  const clearToken = () => {
+    localStorage.removeItem('token');
+    setAuthToken('');
+    setAuthPayload(null);
+  };
+
+  const ensureAuth = (context: string) => {
+    if (isAuthValid) return true;
+    setAuthError(`Authentication required to ${context}.`);
+    setShowAuthModal(true);
+    setMessages(prev => [...prev, {
+      sender: 'System',
+      text: `Authentication required to ${context}. Please log in or paste a token.`,
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    }]);
+    return false;
+  };
+
+  const handleAuthFailure = async (res: Response, context: string) => {
+    if (res.status !== 401) return false;
+    const errorText = await readErrorText(res);
+    setAuthError(errorText);
+    setShowAuthModal(true);
+    setMessages(prev => [...prev, {
+      sender: 'System',
+      text: `Authentication required (${context}): ${errorText}`,
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    }]);
+    return true;
+  };
+
+  const submitAuth = async () => {
+    setAuthError(null);
+    try {
+      const res = await fetch(`${API_BASE}/api/auth/${authMode}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: authUsername.trim(), password: authPassword })
+      });
+      if (!res.ok) {
+        const errorText = await readErrorText(res);
+        setAuthError(errorText);
+        return;
+      }
+      const data = (await res.json()) as { token?: string };
+      if (data.token) {
+        setToken(data.token);
+        setShowAuthModal(false);
+        setAuthPassword('');
+      } else {
+        setAuthError('No token returned by server.');
+      }
+    } catch (error) {
+      setAuthError(error instanceof Error ? error.message : 'Failed to authenticate.');
+    }
+  };
+
+  const saveManualToken = () => {
+    if (!manualToken.trim()) {
+      setAuthError('Paste a token before saving.');
+      return;
+    }
+    setToken(manualToken.trim());
+    setManualToken('');
+    setShowTokenModal(false);
+    setShowAuthModal(false);
+    setAuthError(null);
+  };
+
+  const oauthLogin = async (provider: 'google' | 'github') => {
+    setAuthError(null);
+    try {
+      const res = await fetch(`${API_BASE}/auth/login/${provider}`);
+      if (!res.ok) {
+        const errorText = await readErrorText(res);
+        setAuthError(errorText);
+        return;
+      }
+      const data = (await res.json()) as { url?: string };
+      if (data.url) {
+        window.location.href = data.url;
+      } else {
+        setAuthError('OAuth URL not returned by server.');
+      }
+    } catch (error) {
+      setAuthError(error instanceof Error ? error.message : 'Failed to start OAuth flow.');
+    }
+  };
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -215,6 +343,16 @@ function App() {
   }, [messages]);
 
   useEffect(() => {
+    const url = new URL(window.location.href);
+    const tokenParam = url.searchParams.get('token');
+    if (tokenParam) {
+      setToken(tokenParam);
+      url.searchParams.delete('token');
+      window.history.replaceState({}, '', url.toString());
+    }
+  }, []);
+
+  useEffect(() => {
     void fetchFiles();
   }, []);
 
@@ -226,10 +364,12 @@ function App() {
 
   const fetchFiles = async () => {
     try {
+      if (!ensureAuth('list files')) return;
       const token = localStorage.getItem('token') || '';
       const res = await fetch(`${API_BASE}/api/fs/list`, {
         headers: token ? { Authorization: `Bearer ${token}` } : undefined
       });
+      if (await handleAuthFailure(res, 'listing files')) return;
       if (res.ok) {
         const data = await res.json();
         setFiles(data);
@@ -254,6 +394,7 @@ function App() {
 
   const openFile = async (path: string) => {
     try {
+      if (!ensureAuth('read files')) return;
       const token = localStorage.getItem('token') || '';
       const res = await fetch(`${API_BASE}/api/fs/read`, {
         method: 'POST',
@@ -263,6 +404,7 @@ function App() {
         },
         body: JSON.stringify({ path })
       });
+      if (await handleAuthFailure(res, 'reading files')) return;
       if (res.ok) {
         const data = await res.json();
         setFileContent(data.content);
@@ -300,6 +442,7 @@ function App() {
     const content = editorRef.current ? editorRef.current.getValue() : fileContent;
     
     try {
+      if (!ensureAuth('write files')) return;
       const token = localStorage.getItem('token') || '';
       const res = await fetch(`${API_BASE}/api/fs/write`, {
         method: 'POST',
@@ -309,6 +452,7 @@ function App() {
         },
         body: JSON.stringify({ path: activeFile, content })
       });
+      if (await handleAuthFailure(res, 'writing files')) return;
       if (res.ok) {
         setMessages(prev => [...prev, {
           sender: 'System',
@@ -438,6 +582,7 @@ function App() {
 
   const startAutonomousMode = async () => {
     if (!autonomousTask.trim() || isAutonomousRunning) return;
+    if (!ensureAuth('run autonomous tasks')) return;
 
     const abortController = new AbortController();
     autonomousAbortRef.current?.abort();
@@ -473,6 +618,7 @@ function App() {
           if (abortController.signal.aborted) return;
           if (event.stage === 'persist' && event.message.toLowerCase().includes('authentication')) {
             setAutonomousAuthError('Authentication required to persist files. Add your token in Settings.');
+            setShowAuthModal(true);
           }
           setMessages(prev => [...prev, {
             sender: 'System',
@@ -982,9 +1128,27 @@ function App() {
       <div className={`sidebar-area ${activeMobilePanel === 'sidebar' ? 'visible' : ''}`} style={{ width: sidebarWidth }} ref={sidebarRef}>
         <div className="sidebar-header">
           <h2>Window-AIChat</h2>
+          <button
+            className={`auth-badge ${isAuthValid ? 'auth-ok' : 'auth-missing'}`}
+            onClick={() => setShowAuthModal(true)}
+            title={isAuthValid ? 'Authenticated' : 'Authentication required'}
+          >
+            {isAuthValid ? 'Auth ✓' : 'Auth ✕'}
+          </button>
         </div>
 
         <div className="sidebar-section">
+          <button onClick={() => setShowAuthModal(true)}>
+            🔐 Login / Register
+          </button>
+          <button onClick={() => setShowTokenModal(true)}>
+            🧾 Paste Token
+          </button>
+          {isAuthValid && (
+            <button onClick={clearToken}>
+              🚪 Logout
+            </button>
+          )}
           <button onClick={() => setShowSettings(!showSettings)}>
             ⚙ Settings
           </button>
@@ -1146,6 +1310,100 @@ function App() {
                 originalFileName={diffFileName}
                 modifiedFileName={diffFileName}
               />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Auth Modal */}
+      {showAuthModal && (
+        <div className="modal-overlay">
+          <div className="modal-content auth-modal">
+            <div className="modal-header">
+              <h3>🔐 Authentication</h3>
+              <button onClick={() => setShowAuthModal(false)} className="close-btn">✕</button>
+            </div>
+            <div className="auth-modal-body">
+              <div className="auth-tabs">
+                <button
+                  className={authMode === 'login' ? 'active' : ''}
+                  onClick={() => setAuthMode('login')}
+                >
+                  Login
+                </button>
+                <button
+                  className={authMode === 'register' ? 'active' : ''}
+                  onClick={() => setAuthMode('register')}
+                >
+                  Register
+                </button>
+              </div>
+              <div className="auth-form">
+                <input
+                  type="text"
+                  placeholder="Username"
+                  value={authUsername}
+                  onChange={(e) => setAuthUsername(e.target.value)}
+                />
+                <input
+                  type="password"
+                  placeholder="Password"
+                  value={authPassword}
+                  onChange={(e) => setAuthPassword(e.target.value)}
+                />
+                {authError && <div className="auth-error">{authError}</div>}
+                <button className="primary" onClick={() => void submitAuth()}>
+                  {authMode === 'login' ? 'Login' : 'Create Account'}
+                </button>
+              </div>
+              <div className="auth-divider">or</div>
+              <div className="auth-actions">
+                <button onClick={() => void oauthLogin('google')}>
+                  Continue with Google
+                </button>
+                <button onClick={() => void oauthLogin('github')}>
+                  Continue with GitHub
+                </button>
+                <button onClick={() => setShowTokenModal(true)}>
+                  Paste Token Manually
+                </button>
+              </div>
+              <div className="auth-status">
+                <span>Status: {isAuthValid ? 'Authenticated' : 'Not authenticated'}</span>
+                <span>Expiry: {formatExpiry(authExpiry)}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Token Modal */}
+      {showTokenModal && (
+        <div className="modal-overlay">
+          <div className="modal-content token-modal">
+            <div className="modal-header">
+              <h3>🧾 Paste Token</h3>
+              <button onClick={() => setShowTokenModal(false)} className="close-btn">✕</button>
+            </div>
+            <div className="auth-modal-body">
+              <textarea
+                className="token-input"
+                rows={4}
+                placeholder="Paste JWT token here"
+                value={manualToken}
+                onChange={(e) => setManualToken(e.target.value)}
+              />
+              {authError && <div className="auth-error">{authError}</div>}
+              <div className="token-meta">
+                <span>Current status: {isAuthValid ? 'Authenticated' : 'Not authenticated'}</span>
+                <span>Expiry: {formatExpiry(authExpiry)}</span>
+              </div>
+              <div className="auth-actions">
+                <button className="primary" onClick={saveManualToken}>Save Token</button>
+                {authToken && (
+                  <button onClick={clearToken}>Logout</button>
+                )}
+              </div>
             </div>
           </div>
         </div>
