@@ -16,12 +16,9 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy backend code
-# Only copy necessary backend files, exclude the Tkinter UI (ui/)
-COPY ai_core.py .
-COPY github_handler.py .
+COPY window_aichat ./window_aichat
+COPY api ./api
 COPY backend.py .
-# If there are any other backend-specific modules, copy them here
-# COPY some_other_backend_module.py .
 
 # Create necessary directories
 RUN mkdir -p server_cache/repo_cache workspace
@@ -34,4 +31,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:8000/docs || exit 1
 
 # Run the backend
-CMD ["uvicorn", "backend:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "window_aichat.api.server:app", "--host", "0.0.0.0", "--port", "8000"]
