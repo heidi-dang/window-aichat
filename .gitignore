@@ -28,6 +28,8 @@ wheels/
 .idea
 .vscode
 _gemini_code_review/
+.trae/
+window-aichat/
 
 
 # Configuration & Secrets
@@ -42,6 +44,9 @@ secrets.json
 .cache/
 repo_cache/
 *.cache
+*.db
+*.sqlite
+*.sqlite3
 
 # IDE
 .vscode/

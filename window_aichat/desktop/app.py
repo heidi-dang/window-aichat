@@ -91,7 +91,7 @@ class ChatApp:
             token = self.chat_client.config.get("github_token", "")
 
             try:
-                from github_handler import GitHubHandler
+                from window_aichat.services.github import GitHubHandler
 
                 self.gh_handler = GitHubHandler(self.repo_cache_dir, token=token)
                 logger.info("GitHubHandler initialized successfully")

@@ -3,7 +3,13 @@ import json
 import time
 import random
 import requests
-import google.generativeai as genai
+import warnings
+
+# Suppress deprecation warning for google.generativeai
+with warnings.catch_warnings():
+    warnings.simplefilter("ignore")
+    import google.generativeai as genai
+
 from typing import Dict, Optional
 from cryptography.fernet import Fernet
 import logging
@@ -33,8 +39,8 @@ def setup_logging():
 
 class SecureConfig:
     def __init__(self, config_path: str):
-        self.config_path = config_path
-        self.key_file = config_path.replace(".json", ".key")
+        self.config_path = os.path.abspath(config_path)
+        self.key_file = self.config_path.replace(".json", ".key")
         self.cipher = self._get_cipher()
 
     def _get_cipher(self):

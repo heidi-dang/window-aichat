@@ -1,5 +1,3 @@
-import React from 'react';
-
 interface StatusBarProps {
   activeFile: string | null;
   language: string;
