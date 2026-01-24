@@ -19,7 +19,7 @@ import DiffViewer from './components/IDE/DiffViewer';
 import { EvolveAI, LivingDocumentation } from './evolve';
 import PullRequestPanel, { type PullRequest, type PullRequestFile } from './components/IDE/PullRequestPanel';
 import { AgentLoop } from './agent/AgentLoop';
-import { readJsonResponse } from './utils/apiResponse';
+import { readJsonResponse } from './utils/apiResponse.ts';
 
 interface Message {
   sender: string;
@@ -136,6 +136,9 @@ const GOOGLE_CONFIGURED = Boolean(
 const GITHUB_CONFIGURED = Boolean(
   (import.meta as { env: Record<string, string | undefined> }).env?.VITE_GITHUB_CLIENT_ID
 );
+const IS_E2E =
+  ((import.meta as { env: Record<string, string | undefined> }).env?.VITE_E2E || '').toLowerCase() === 'true' ||
+  ((import.meta as { env: Record<string, string | undefined> }).env?.VITE_E2E || '') === '1';
 const AUDIT_STORAGE_KEY = 'window-aichat:auth-audit';
 const AUDIT_PERSIST_KEY = 'window-aichat:auth-audit-persist';
 const REFRESH_COOLDOWN_MS = 60_000;
@@ -202,6 +205,11 @@ function App() {
   const [authHealthStatus, setAuthHealthStatus] = useState<'ok' | 'error' | 'unknown'>('unknown');
   const [refreshCooldownUntil, setRefreshCooldownUntil] = useState<number | null>(null);
   const expiryWarningRef = useRef<number | null>(null);
+  const openAuthModal = (force = false) => {
+    if (force || !IS_E2E) {
+      setShowAuthModal(true);
+    }
+  };
 
   // File System & Editor State
   const [files, setFiles] = useState<FileEntry[]>([]);
@@ -279,7 +287,7 @@ function App() {
   const ensureAuth = (context: string) => {
     if (isAuthValid) return true;
     setAuthError(`Authentication required to ${context}.`);
-    setShowAuthModal(true);
+    openAuthModal();
     reportUnauthorized(context);
     setMessages(prev => [...prev, {
       sender: 'System',
@@ -310,7 +318,7 @@ function App() {
       return true;
     }
     setAuthError(errorText);
-    setShowAuthModal(true);
+    openAuthModal();
     reportUnauthorized(context);
     setMessages(prev => [...prev, {
       sender: 'System',
@@ -441,10 +449,14 @@ function App() {
   const oauthLogin = async (provider: 'google' | 'github') => {
     setAuthError(null);
     try {
+      if (!API_BASE) {
+        setAuthError('VITE_API_BASE is not set. Configure the backend URL for OAuth.');
+        return;
+      }
       const res = await fetch(`${API_BASE}/auth/login/${provider}`);
       if (!res.ok) {
         const errorText = await readErrorText(res);
-        setAuthError(errorText);
+        setAuthError(errorText.includes('<!DOCTYPE') ? 'OAuth endpoint returned HTML. Check VITE_API_BASE.' : errorText);
         return;
       }
       const data = await readJsonResponse<{ url?: string; error?: string }>(res);
@@ -852,7 +864,7 @@ function App() {
           if (abortController.signal.aborted) return;
           if (event.stage === 'persist' && event.message.toLowerCase().includes('authentication')) {
             setAutonomousAuthError('Authentication required to persist files. Add your token in Settings.');
-            setShowAuthModal(true);
+            openAuthModal();
           }
           setMessages(prev => [...prev, {
             sender: 'System',
@@ -1359,7 +1371,7 @@ function App() {
   return (
     <div className="app-container">
       {authToast && (
-        <div className="auth-toast" onClick={() => setShowAuthModal(true)}>
+        <div className="auth-toast" onClick={() => openAuthModal(true)}>
           {authToast}
         </div>
       )}
@@ -1415,7 +1427,7 @@ function App() {
           <span className="auth-countdown">{authCountdown}</span>
           <button
             className={`auth-badge ${isAuthValid ? 'auth-ok' : 'auth-missing'}`}
-            onClick={() => setShowAuthModal(true)}
+            onClick={() => openAuthModal(true)}
             title={isAuthValid ? 'Authenticated' : 'Authentication required'}
           >
             {isAuthValid ? 'Auth ✓' : 'Auth ✕'}
@@ -1423,7 +1435,7 @@ function App() {
         </div>
 
         <div className="sidebar-section">
-          <button onClick={() => setShowAuthModal(true)}>
+          <button onClick={() => openAuthModal(true)}>
             🔐 Login / Register
           </button>
           <button onClick={() => setShowAuthDashboard(true)}>
@@ -1520,7 +1532,7 @@ function App() {
               <strong>Login required</strong>
               <p>Authenticate to access your workspace files.</p>
             </div>
-            <button onClick={() => setShowAuthModal(true)}>Login</button>
+            <button onClick={() => openAuthModal(true)}>Login</button>
           </div>
         )}
         <div className="resizer-handle" onMouseDown={startResizeSidebar}></div>
@@ -1820,7 +1832,7 @@ function App() {
               {!isAuthValid && (
                 <div className="autonomous-auth-cta">
                   <span>Authentication required to run autonomous tasks.</span>
-                  <button onClick={() => setShowAuthModal(true)}>
+                  <button onClick={() => openAuthModal(true)}>
                     Login to Continue
                   </button>
                 </div>

@@ -13,8 +13,15 @@ test.describe('EvolveAI Magic Feature User Flow', () => {
     expect(loadTime).toBeLessThan(2000);
     
     // Wait for the sidebar to be visible
-    await expect(page.locator('.sidebar')).toBeVisible({ timeout: 2000 });
+    await expect(page.locator('.sidebar-area')).toBeVisible({ timeout: 2000 });
     
+    // Close auth modal if it is blocking interactions
+    const closeButtons = page.locator('button:has-text("✕")');
+    if (await closeButtons.first().isVisible().catch(() => false)) {
+      await closeButtons.first().click();
+      await expect(page.locator('.modal-overlay')).toBeHidden({ timeout: 2000 });
+    }
+
     // Click on EvolveAI button (should be instant)
     const evolveButton = page.locator('button:has-text("🧬 EvolveAI")');
     await expect(evolveButton).toBeVisible();
