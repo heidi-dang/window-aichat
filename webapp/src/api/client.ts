@@ -58,6 +58,11 @@ async function readBodyText(res: Response): Promise<string> {
 export async function apiFetchJson<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, withAuthHeaders(init));
   if (res.ok) {
+    const contentType = res.headers.get('content-type') || '';
+    if (!contentType.includes('application/json')) {
+      const text = await readBodyText(res);
+      throw new ApiError({ code: 'invalid_json', message: text, status: res.status });
+    }
     return (await res.json()) as T;
   }
 

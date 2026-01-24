@@ -454,7 +454,7 @@ export class EvolutionEngine {
 
   private async getFileContent(apiBase: string, path: string): Promise<string> {
     try {
-      const token = localStorage.getItem('token') || '';
+      const token = getToken();
       const response = await fetch(`${apiBase}/api/fs/read`, {
         method: 'POST',
         headers: {
@@ -463,6 +463,11 @@ export class EvolutionEngine {
         },
         body: JSON.stringify({ path })
       });
+      const contentType = response.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) {
+        console.warn('[EvolveAI] Non-JSON response when reading file:', path);
+        return '';
+      }
       const data = await response.json();
       return data.content || '';
     } catch (error) {

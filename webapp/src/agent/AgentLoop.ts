@@ -181,6 +181,11 @@ export class AgentLoop {
             deepseek_key: options.deepseekKey
           })
         });
+        const contentType = res.headers.get('content-type') || '';
+        if (!contentType.includes('application/json')) {
+          const text = await res.text();
+          throw new Error(text || 'Non-JSON response from /api/chat');
+        }
         const data = await res.json();
         const text = data.content || data.text;
         if (!text) return null;
@@ -212,6 +217,11 @@ export class AgentLoop {
       
       if (!res.ok) throw new Error(res.statusText);
       
+      const contentType = res.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) {
+        const text = await res.text();
+        throw new Error(text || 'Non-JSON response from /api/chat');
+      }
       const data = await res.json();
       const text = data.content || data.text || '';
       

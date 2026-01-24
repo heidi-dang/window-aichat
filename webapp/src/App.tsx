@@ -129,6 +129,12 @@ type ChatApiResponse = Partial<Message> & Record<string, unknown>;
 const API_BASE =
   (import.meta as { env: Record<string, string | undefined> }).env?.VITE_API_BASE?.replace(/\/$/, '') ||
   '';
+const GOOGLE_CONFIGURED = Boolean(
+  (import.meta as { env: Record<string, string | undefined> }).env?.VITE_GOOGLE_CLIENT_ID
+);
+const GITHUB_CONFIGURED = Boolean(
+  (import.meta as { env: Record<string, string | undefined> }).env?.VITE_GITHUB_CLIENT_ID
+);
 
 async function readErrorText(res: Response): Promise<string> {
   try {
@@ -181,6 +187,9 @@ function App() {
   const [authTelemetry, setAuthTelemetry] = useState<{ count: number; lastAt?: string }>(() => ({ count: 0 }));
   const [authAuditLog, setAuthAuditLog] = useState<Array<{ time: string; context: string }>>([]);
   const [authCountdown, setAuthCountdown] = useState(() => formatCountdown(decodeJwt(getToken())?.exp as number | null));
+  const [showAuthDashboard, setShowAuthDashboard] = useState(false);
+  const [showTokenPlain, setShowTokenPlain] = useState(false);
+  const [rateLimitWarnings, setRateLimitWarnings] = useState<Array<{ time: string; message: string }>>([]);
 
   // File System & Editor State
   const [files, setFiles] = useState<FileEntry[]>([]);
@@ -269,8 +278,18 @@ function App() {
   };
 
   const handleAuthFailure = async (res: Response, context: string) => {
-    if (res.status !== 401) return false;
+    if (res.status !== 401 && res.status !== 429) return false;
     const errorText = await readErrorText(res);
+    if (res.status === 429) {
+      const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      setRateLimitWarnings(prev => [{ time: timestamp, message: errorText }, ...prev].slice(0, 10));
+      setMessages(prev => [...prev, {
+        sender: 'System',
+        text: `Rate limit hit (${context}): ${errorText}`,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      }]);
+      return true;
+    }
     setAuthError(errorText);
     setShowAuthModal(true);
     reportUnauthorized(context);
@@ -458,6 +477,12 @@ function App() {
   }, [authExpiry]);
 
   useEffect(() => {
+    if (authExpiry && authExpiry * 1000 <= Date.now()) {
+      void refreshToken();
+    }
+  }, [authExpiry]);
+
+  useEffect(() => {
     void fetchFiles();
   }, []);
 
@@ -476,6 +501,16 @@ function App() {
       });
       if (await handleAuthFailure(res, 'listing files')) return;
       if (res.ok) {
+        const contentType = res.headers.get('content-type') || '';
+        if (!contentType.includes('application/json')) {
+          const errorText = await readErrorText(res);
+          setMessages(prev => [...prev, {
+            sender: 'System',
+            text: `Unexpected response format: ${errorText}`,
+            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+          }]);
+          return;
+        }
         const data = await res.json();
         setFiles(data);
       }
@@ -511,6 +546,16 @@ function App() {
       });
       if (await handleAuthFailure(res, 'reading files')) return;
       if (res.ok) {
+        const contentType = res.headers.get('content-type') || '';
+        if (!contentType.includes('application/json')) {
+          const errorText = await readErrorText(res);
+          setMessages(prev => [...prev, {
+            sender: 'System',
+            text: `Unexpected response format: ${errorText}`,
+            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+          }]);
+          return;
+        }
         const data = await res.json();
         setFileContent(data.content);
         setActiveFile(path);
@@ -631,6 +676,16 @@ function App() {
         return;
       }
 
+      const contentType = res.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) {
+        const errorText = await readErrorText(res);
+        setMessages(prev => [...prev, {
+          sender: 'System',
+          text: `Unexpected response format: ${errorText}`,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        }]);
+        return;
+      }
       const data = await res.json();
       setMessages(prev => [...prev, {
         sender: 'AI Tool',
@@ -1234,6 +1289,46 @@ function App() {
           {authToast}
         </div>
       )}
+
+      {/* Auth Dashboard Modal */}
+      {showAuthDashboard && (
+        <div className="modal-overlay">
+          <div className="modal-content auth-modal">
+            <div className="modal-header">
+              <h3>📊 Auth Dashboard</h3>
+              <button onClick={() => setShowAuthDashboard(false)} className="close-btn">✕</button>
+            </div>
+            <div className="auth-modal-body">
+              <div className="auth-dashboard-grid">
+                <div className="auth-card">
+                  <h4>Status</h4>
+                  <p>{isAuthValid ? 'Authenticated' : 'Not authenticated'}</p>
+                  <p>Role: {authRole}</p>
+                </div>
+                <div className="auth-card">
+                  <h4>Expiry</h4>
+                  <p>{formatExpiry(authExpiry)}</p>
+                  <p>{authCountdown}</p>
+                </div>
+                <div className="auth-card">
+                  <h4>Unauthorized Attempts</h4>
+                  <p>{authTelemetry.count}</p>
+                  <p>Last: {authTelemetry.lastAt ?? '—'}</p>
+                </div>
+                <div className="auth-card">
+                  <h4>Rate Limits</h4>
+                  <p>{rateLimitWarnings.length}</p>
+                </div>
+              </div>
+              <div className="auth-sparkline">
+                {authAuditLog.length === 0 ? 'No activity yet.' : authAuditLog.map((_, idx) => (
+                  <span key={idx} style={{ height: `${8 + idx * 2}px` }} />
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
       {/* Sidebar */}
       <div className={`sidebar-area ${activeMobilePanel === 'sidebar' ? 'visible' : ''}`} style={{ width: sidebarWidth }} ref={sidebarRef}>
         <div className="sidebar-header">
@@ -1252,6 +1347,9 @@ function App() {
         <div className="sidebar-section">
           <button onClick={() => setShowAuthModal(true)}>
             🔐 Login / Register
+          </button>
+          <button onClick={() => setShowAuthDashboard(true)}>
+            📊 Auth Dashboard
           </button>
           <button onClick={() => setShowTokenModal(true)}>
             🧾 Paste Token
@@ -1312,8 +1410,8 @@ function App() {
           </div>
         )}
 
-        <div className="sidebar-section">
-          <button onClick={() => void cloneRepo()} disabled={isLoading || !repoUrl}>
+        <div className="sidebar-section" title={!isAuthValid ? 'Login required to manage workspace files.' : undefined}>
+          <button onClick={() => void cloneRepo()} disabled={isLoading || !repoUrl || !isAuthValid}>
             {isLoading ? 'Cloning...' : 'Clone GitHub Repo'}
           </button>
           <input
@@ -1321,9 +1419,9 @@ function App() {
             id="upload-zip"
             style={{ display: 'none' }}
             onChange={(e) => void uploadFile(e)}
-            disabled={isLoading}
+            disabled={isLoading || !isAuthValid}
           />
-          <button onClick={() => document.getElementById('upload-zip')?.click()} disabled={isLoading}>
+          <button onClick={() => document.getElementById('upload-zip')?.click()} disabled={isLoading || !isAuthValid}>
             Upload Zip/File
           </button>
         </div>
@@ -1497,6 +1595,11 @@ function App() {
                 <span>Expiry: {formatExpiry(authExpiry)}</span>
                 <span>Countdown: {authCountdown}</span>
               </div>
+              {(!GOOGLE_CONFIGURED || !GITHUB_CONFIGURED) && (
+                <div className="auth-oauth-hint">
+                  OAuth not configured: set {(!GOOGLE_CONFIGURED && 'VITE_GOOGLE_CLIENT_ID') || ''}{(!GOOGLE_CONFIGURED && !GITHUB_CONFIGURED ? ' & ' : '')}{(!GITHUB_CONFIGURED && 'VITE_GITHUB_CLIENT_ID') || ''} in webapp env.
+                </div>
+              )}
               {isAuthExpired && (
                 <div className="auth-expired">Session expired. Re-authenticate to refresh your token.</div>
               )}
@@ -1510,7 +1613,10 @@ function App() {
               <div className="auth-claims">
                 <div className="auth-claims-title">JWT Claims</div>
                 <pre>{authPayload ? JSON.stringify(authPayload, null, 2) : 'No token claims available.'}</pre>
-                <button onClick={() => void copyToken()}>Copy Token</button>
+                <div className="auth-claims-actions">
+                  <button onClick={() => void copyToken()}>Copy Token</button>
+                  <button onClick={() => void navigator.clipboard.writeText(JSON.stringify(authPayload ?? {}, null, 2))}>Copy Claims JSON</button>
+                </div>
               </div>
               <div className="auth-audit">
                 <div className="auth-audit-title">Auth Audit Log</div>
@@ -1527,6 +1633,19 @@ function App() {
                   </ul>
                 )}
               </div>
+              {rateLimitWarnings.length > 0 && (
+                <div className="auth-rate-limit">
+                  <div className="auth-audit-title">Rate Limit Warnings</div>
+                  <ul>
+                    {rateLimitWarnings.map((entry, index) => (
+                      <li key={`${entry.time}-${index}`}>
+                        <span>{entry.time}</span>
+                        <span>{entry.message}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -1548,6 +1667,19 @@ function App() {
                 value={manualToken}
                 onChange={(e) => setManualToken(e.target.value)}
               />
+              <div className="token-toggle">
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={showTokenPlain}
+                    onChange={() => setShowTokenPlain((prev) => !prev)}
+                  />
+                  Show token text
+                </label>
+              </div>
+              {showTokenPlain && authToken && (
+                <pre className="token-preview">{authToken}</pre>
+              )}
               {authError && <div className="auth-error">{authError}</div>}
               <div className="token-meta">
                 <span>Current status: {isAuthValid ? 'Authenticated' : 'Not authenticated'}</span>
