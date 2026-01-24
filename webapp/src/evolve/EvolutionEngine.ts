@@ -1,7 +1,3 @@
-import VectorStoreService, { type SearchResult } from '../utils/VectorStoreService';
-import * as api from '../api/routes';
-import type { ChatUiMessage } from '../hooks/useChat';
-
 export interface CodePattern {
   id: string;
   type: 'function' | 'class' | 'component' | 'hook' | 'api' | 'config';
@@ -39,10 +35,8 @@ export interface PredictiveInsight {
 
 export class EvolutionEngine {
   private static instance: EvolutionEngine;
-  private vectorStore = VectorStoreService.getInstance();
   private patterns: Map<string, CodePattern> = new Map();
   private insights: PredictiveInsight[] = [];
-  private isAnalyzing = false;
 
   private constructor() {}
 
@@ -141,7 +135,7 @@ export class EvolutionEngine {
     if (!startIndex) return '';
     const lines = content.substring(startIndex).split('\n');
     let braceCount = 0;
-    let contentLines = [];
+    const contentLines: string[] = [];
     let foundOpening = false;
 
     for (const line of lines) {
@@ -165,7 +159,7 @@ export class EvolutionEngine {
     if (!startIndex) return '';
     const lines = content.substring(startIndex).split('\n');
     let braceCount = 0;
-    let contentLines = [];
+    const contentLines: string[] = [];
 
     for (const line of lines) {
       contentLines.push(line);
@@ -431,11 +425,15 @@ export class EvolutionEngine {
   private async getAllCodeFiles(apiBase: string): Promise<string[]> {
     try {
       const response = await fetch(`${apiBase}/api/fs/list`);
-      const files = await response.json();
-      return files
-        .filter((f: any) => f.type === 'file')
-        .filter((f: any) => f.name.match(/\.(ts|tsx|js|jsx)$/))
-        .map((f: any) => f.path);
+      const files = (await response.json()) as unknown;
+      const list = Array.isArray(files) ? files : [];
+
+      return list
+        .filter((entry): entry is Record<string, unknown> => !!entry && typeof entry === 'object')
+        .filter((entry) => entry.type === 'file')
+        .filter((entry) => typeof entry.name === 'string' && /\.(ts|tsx|js|jsx)$/.test(entry.name))
+        .map((entry) => String(entry.path ?? ''))
+        .filter(Boolean);
     } catch (error) {
       console.error('[EvolveAI] Failed to get code files:', error);
       return [];

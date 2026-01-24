@@ -1,8 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Badge } from '../components/ui/badge';
-import { Alert, AlertDescription } from '../components/ui/alert';
+import { Alert } from '../components/ui/alert';
 import { Lightbulb, TrendingUp, Shield, Zap, Code, CheckCircle, AlertTriangle } from 'lucide-react';
 import EvolutionEngine, { type PredictiveInsight, type EvolutionSuggestion } from './EvolutionEngine';
 
@@ -15,30 +15,30 @@ export const EvolveAI: React.FC<EvolveAIProps> = ({ apiBase }) => {
   const [insights, setInsights] = useState<PredictiveInsight[]>([]);
   const [suggestions, setSuggestions] = useState<EvolutionSuggestion[]>([]);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [selectedInsight, setSelectedInsight] = useState<PredictiveInsight | null>(null);
+  const initializeEvolutionSystem = useCallback(
+    async (activeEngine: EvolutionEngine) => {
+      setIsAnalyzing(true);
+      try {
+        await activeEngine.initializeEvolutionSystem(apiBase);
+        const nextInsights = await activeEngine.generatePredictiveInsights();
+        const nextSuggestions = await activeEngine.generateEvolutionSuggestions();
+
+        setInsights(nextInsights);
+        setSuggestions(nextSuggestions);
+      } catch (error) {
+        console.error('[EvolveAI] Failed to initialize:', error);
+      } finally {
+        setIsAnalyzing(false);
+      }
+    },
+    [apiBase]
+  );
 
   useEffect(() => {
     const evolutionEngine = EvolutionEngine.getInstance();
     setEngine(evolutionEngine);
-    
-    initializeEvolutionSystem(evolutionEngine);
-  }, []);
-
-  const initializeEvolutionSystem = async (engine: EvolutionEngine) => {
-    setIsAnalyzing(true);
-    try {
-      await engine.initializeEvolutionSystem(apiBase);
-      const insights = await engine.generatePredictiveInsights();
-      const suggestions = await engine.generateEvolutionSuggestions();
-      
-      setInsights(insights);
-      setSuggestions(suggestions);
-    } catch (error) {
-      console.error('[EvolveAI] Failed to initialize:', error);
-    } finally {
-      setIsAnalyzing(false);
-    }
-  };
+    void initializeEvolutionSystem(evolutionEngine);
+  }, [initializeEvolutionSystem]);
 
   const getCategoryIcon = (category: string) => {
     switch (category) {
@@ -111,8 +111,8 @@ export const EvolveAI: React.FC<EvolveAIProps> = ({ apiBase }) => {
           </p>
         </div>
         <Button
-          onClick={() => initializeEvolutionSystem(engine!)}
-          disabled={isAnalyzing}
+          onClick={() => engine && initializeEvolutionSystem(engine)}
+          disabled={isAnalyzing || !engine}
           variant="outline"
         >
           Refresh Analysis
