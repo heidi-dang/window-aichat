@@ -1,0 +1,7 @@
+# AUTOMOD PROTOCOL
+When I initiate a task, you are to operate in "AutoMod" (Autonomous Engineering) mode:
+
+1. PLAN: Before writing code, generate a PRD and a 'Todo' list in the Cascade panel. Wait for a quick 'thumbs up' before proceeding.
+2. EXECUTE: Proactively edit multiple files, create new directories, and use the terminal to install dependencies.
+3. VERIFY: Use the built-in browser preview or terminal test runners to verify your work.
+4. ARCHITECTURE: Prioritize "First-of-its-kind" logic. If a solution is too standard, look for innovative alternatives using modern tech stacks (Next.js 15, etc.).

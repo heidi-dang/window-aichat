@@ -6,6 +6,7 @@ import FileExplorer from './components/IDE/FileExplorer';
 import StatusBar from './components/IDE/StatusBar';
 import DiffViewer from './components/IDE/DiffViewer';
 import PullRequestPanel from './components/IDE/PullRequestPanel';
+import { EvolveAI, LivingDocumentation } from './evolve';
 
 interface Message {
   sender: string;
@@ -100,6 +101,10 @@ function App() {
   const diffOriginalContent = '';
   const diffModifiedContent = '';
   const diffFileName = '';
+
+  // EvolveAI State
+  const [showEvolveAI, setShowEvolveAI] = useState(false);
+  const [showLivingDocs, setShowLivingDocs] = useState(false);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -694,6 +699,12 @@ function App() {
             <button onClick={() => setShowDiffViewer(!showDiffViewer)}>
               📊 Compare Files
             </button>
+            <button onClick={() => setShowEvolveAI(!showEvolveAI)}>
+              🧬 EvolveAI
+            </button>
+            <button onClick={() => setShowLivingDocs(!showLivingDocs)}>
+              📚 Living Docs
+            </button>
           </div>
 
           {showSettings && (
@@ -877,6 +888,36 @@ function App() {
           Chat
         </button>
       </div>
+
+      {/* EvolveAI Modal */}
+      {showEvolveAI && (
+        <div className="modal-overlay">
+          <div className="modal-content evolve-modal">
+            <div className="modal-header">
+              <h3>🧬 EvolveAI - Predictive Code Evolution</h3>
+              <button onClick={() => setShowEvolveAI(false)} className="close-btn">✕</button>
+            </div>
+            <div className="evolve-container">
+              <EvolveAI apiBase={API_BASE} />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Living Documentation Modal */}
+      {showLivingDocs && (
+        <div className="modal-overlay">
+          <div className="modal-content docs-modal">
+            <div className="modal-header">
+              <h3>📚 Living Documentation</h3>
+              <button onClick={() => setShowLivingDocs(false)} className="close-btn">✕</button>
+            </div>
+            <div className="docs-container">
+              <LivingDocumentation apiBase={API_BASE} />
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
