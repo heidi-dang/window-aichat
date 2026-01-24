@@ -2,6 +2,13 @@ from abc import ABC, abstractmethod
 from typing import Generator, Dict, Any, Optional, List
 import logging
 import requests
+import warnings
+
+warnings.filterwarnings(
+    "ignore",
+    category=FutureWarning,
+    message=r"(?s).*All support for the `google\.generativeai` package has ended\..*",
+)
 import google.generativeai as genai
 import time
 import random

@@ -3,6 +3,7 @@ import * as MonacoEditor from 'monaco-editor';
 import DiffModal from './components/DiffModal';
 import { AgentLoop } from './agent/AgentLoop';
 import VectorStoreService from './utils/VectorStoreService';
+import WebContainerService from './utils/WebContainerService';
 import { Sidebar } from './components/Layout/Sidebar';
 import { EditorPanel } from './components/Editor/EditorPanel';
 import { ChatInterface } from './components/Chat/ChatInterface';
@@ -12,13 +13,20 @@ import * as api from './api/routes';
 import { useChat } from './hooks/useChat';
 import { useSettings } from './hooks/useSettings';
 import { useWorkspaceFs } from './hooks/useWorkspaceFs';
+import { useSessions } from './hooks/useSessions';
+import { ContextOrchestrator, type ContextPack } from './context/ContextOrchestrator';
 
 function App() {
   const chat = useChat();
   const settings = useSettings();
   const workspace = useWorkspaceFs();
+  const sessions = useSessions();
 
   const [isLoading, setIsLoading] = useState(false);
+  const [pinnedFiles, setPinnedFiles] = useState<string[]>(sessions.currentSession.pinnedFiles);
+  const [lastContextPack, setLastContextPack] = useState<ContextPack | null>(null);
+  const orchestratorRef = useRef<ContextOrchestrator | null>(null);
+  const isHydratingSessionRef = useRef(false);
   const editorRef = useRef<MonacoEditor.editor.IStandaloneCodeEditor | null>(null);
   const geminiKeyRef = useRef(settings.geminiKey);
   const deepseekKeyRef = useRef(settings.deepseekKey);
@@ -50,6 +58,25 @@ function App() {
   useEffect(() => {
     VectorStoreService.getInstance().indexWorkspace(API_BASE);
   }, []);
+
+  useEffect(() => {
+    isHydratingSessionRef.current = true;
+    chat.setMessages(sessions.currentSession.messages);
+    chat.setSelectedModel(sessions.currentSession.model);
+    setPinnedFiles(sessions.currentSession.pinnedFiles);
+    queueMicrotask(() => {
+      isHydratingSessionRef.current = false;
+    });
+  }, [sessions.currentSessionId]);
+
+  useEffect(() => {
+    if (isHydratingSessionRef.current) return;
+    sessions.updateSession(sessions.currentSessionId, {
+      messages: chat.messages,
+      model: chat.selectedModel,
+      pinnedFiles
+    });
+  }, [chat.messages, chat.selectedModel, pinnedFiles, sessions.currentSessionId]);
 
   const runTool = async (tool: string) => {
     if (!editorRef.current) { return; }
@@ -153,6 +180,11 @@ function App() {
       githubToken: settings.githubToken,
       repoUrl: settings.repoUrl,
       onLog: (msg) => setAgentLogs(prev => [...prev, msg]),
+      onEvent: (evt) => {
+        if (evt.type === 'tool') {
+          chat.pushSystemMessage(`[Tool:${evt.stage}] ${evt.message}`);
+        }
+      },
       context: {
         diagnostics,
         currentFile: workspace.activeFile || undefined,
@@ -169,11 +201,32 @@ function App() {
     });
   };
 
-  const sendMessage = () => chat.sendMessage({
-    geminiKey: settings.geminiKey,
-    deepseekKey: settings.deepseekKey,
-    setIsLoading
-  });
+  const sendMessage = async () => {
+    if (!orchestratorRef.current) orchestratorRef.current = new ContextOrchestrator();
+
+    const pack = await orchestratorRef.current.buildContextPack({
+      query: chat.input,
+      messages: chat.messages,
+      pinnedFiles
+    });
+    setLastContextPack(pack);
+
+    const historyOverride = [
+      { role: 'system', content: pack.systemPrompt },
+      ...chat.messages.map((m) => ({
+        role: m.sender === 'You' ? 'user' : (m.sender === 'System' ? 'system' : 'assistant'),
+        content: m.text
+      }))
+    ];
+
+    await chat.sendMessage({
+      geminiKey: settings.geminiKey,
+      deepseekKey: settings.deepseekKey,
+      setIsLoading,
+      historyOverride,
+      contextPackId: pack.id
+    });
+  };
 
   const cloneRepo = async () => {
     if (!settings.repoUrl) {
@@ -205,6 +258,10 @@ function App() {
     setIsLoading(false);
   };
 
+  const togglePinFile = (path: string) => {
+    setPinnedFiles((prev) => (prev.includes(path) ? prev.filter((p) => p !== path) : [path, ...prev]));
+  };
+
   return (
     <div className="flex h-screen w-screen bg-background text-foreground overflow-hidden">
       <Sidebar 
@@ -215,6 +272,12 @@ function App() {
         onSettingsClick={() => settings.setShowSettings(true)}
         onCloneClick={cloneRepo}
         onUploadClick={uploadFile}
+        sessions={sessions.sessions.map((s) => ({ id: s.id, name: s.name }))}
+        currentSessionId={sessions.currentSessionId}
+        onSessionChange={sessions.setCurrentSessionId}
+        onCreateSession={() => sessions.createSession()}
+        pinnedFiles={pinnedFiles}
+        onTogglePin={togglePinFile}
         className="w-64 flex-shrink-0"
       />
 
@@ -244,6 +307,7 @@ function App() {
           onCancel={chat.isStreaming ? chat.cancel : undefined}
           onRegenerate={chat.canRegenerate ? chat.regenerate : undefined}
           canRegenerate={chat.canRegenerate}
+          contextPack={lastContextPack}
           selectedModel={chat.selectedModel}
           setSelectedModel={chat.setSelectedModel}
           className="w-96 flex-shrink-0"
@@ -299,6 +363,16 @@ function App() {
           original={diffOriginal}
           modified={diffModified}
           filename={diffFilename}
+          onRunChecks={async () => {
+            const code = await WebContainerService.runWebappTests();
+            return code === 0;
+          }}
+          provenance={{
+            sessionId: sessions.currentSessionId,
+            model: chat.selectedModel,
+            contextPackId: lastContextPack?.id || null,
+            createdAt: Date.now()
+          }}
           onAccept={() => {
             workspace.setFileContent(diffModified);
             setShowDiff(false);

@@ -1,5 +1,5 @@
-import React, { useRef, useEffect } from 'react';
-import { Send, Bot, User, Loader2 } from 'lucide-react';
+import React, { useRef, useEffect, useState } from 'react';
+import { Send, Bot, User } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -19,6 +19,16 @@ interface ChatInterfaceProps {
   onCancel?: () => void;
   onRegenerate?: () => void;
   canRegenerate?: boolean;
+  contextPack?: {
+    id: string;
+    totalScore: number;
+    items: Array<{
+      title: string;
+      score: number;
+      reason: Record<string, unknown>;
+      source: { type: string; ref?: string };
+    }>;
+  } | null;
   selectedModel: string;
   setSelectedModel: (val: string) => void;
   className?: string;
@@ -33,11 +43,13 @@ export const ChatInterface = React.memo(function ChatInterface({
   onCancel,
   onRegenerate,
   canRegenerate,
+  contextPack,
   selectedModel,
   setSelectedModel,
   className
 }: ChatInterfaceProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const [showContext, setShowContext] = useState(false);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -55,6 +67,14 @@ export const ChatInterface = React.memo(function ChatInterface({
       <div className="p-4 border-b border-border flex items-center justify-between bg-muted/10">
         <h3 className="font-semibold text-sm">AI Assistant</h3>
         <div className="flex items-center gap-2">
+          {contextPack && (
+            <button
+              onClick={() => setShowContext((v) => !v)}
+              className="text-xs bg-background border border-border rounded px-2 py-1 hover:bg-muted/40"
+            >
+              Context
+            </button>
+          )}
           {onCancel && isLoading && (
             <button
               onClick={onCancel}
@@ -81,6 +101,27 @@ export const ChatInterface = React.memo(function ChatInterface({
           </select>
         </div>
       </div>
+
+      {showContext && contextPack && (
+        <div className="border-b border-border bg-background/50 px-4 py-3">
+          <div className="text-[11px] text-muted-foreground mb-2">
+            Context pack {contextPack.id} • Score {contextPack.totalScore.toFixed(2)}
+          </div>
+          <div className="space-y-2 max-h-40 overflow-y-auto">
+            {contextPack.items.map((item, i) => (
+              <div key={`${contextPack.id}-${i}`} className="text-xs border border-border rounded p-2 bg-muted/30">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="font-medium truncate">{item.title}</div>
+                  <div className="text-[10px] opacity-70 shrink-0">{item.score.toFixed(2)}</div>
+                </div>
+                <div className="text-[10px] text-muted-foreground mt-1 truncate">
+                  {item.source.type}{item.source.ref ? `: ${item.source.ref}` : ''}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
         {messages.map((msg, idx) => {
@@ -122,16 +163,6 @@ export const ChatInterface = React.memo(function ChatInterface({
             </div>
           );
         })}
-        {isLoading && (
-          <div className="flex gap-3">
-             <div className="w-8 h-8 rounded-full bg-secondary flex items-center justify-center shrink-0">
-                <Loader2 className="w-5 h-5 animate-spin" />
-             </div>
-             <div className="bg-muted text-muted-foreground rounded-lg rounded-tl-none p-3 text-sm">
-                Thinking...
-             </div>
-          </div>
-        )}
         <div ref={messagesEndRef} />
       </div>
 

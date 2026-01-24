@@ -17,6 +17,7 @@ type LastRequestSnapshot = {
   geminiKey?: string;
   deepseekKey?: string;
   assistantStreamId: string;
+  contextPackId?: string;
 };
 
 function describeError(error: unknown): string {
@@ -48,6 +49,7 @@ export function useChat() {
   const [input, setInput] = useState('');
   const [selectedModel, setSelectedModel] = useState('gemini');
   const [activeStreamId, setActiveStreamId] = useState<string | null>(null);
+  const [lastContextPackId, setLastContextPackId] = useState<string | null>(null);
 
   const pushMessage = (msg: ChatUiMessage) => setMessages((prev) => [...prev, msg]);
   const wsRef = useRef<WebSocket | null>(null);
@@ -175,7 +177,13 @@ export function useChat() {
     }
   };
 
-  const sendMessage = async (opts: { geminiKey: string; deepseekKey: string; setIsLoading: (v: boolean) => void }) => {
+  const sendMessage = async (opts: {
+    geminiKey: string;
+    deepseekKey: string;
+    setIsLoading: (v: boolean) => void;
+    historyOverride?: ChatHistoryItem[];
+    contextPackId?: string;
+  }) => {
     if (!input.trim()) return;
 
     setLoadingRef.current = opts.setIsLoading;
@@ -199,15 +207,17 @@ export function useChat() {
       streamId
     };
 
-    const historySnapshot = messages.map((m) => ({ role: toChatRole(m.sender), content: m.text }));
+    const historySnapshot = opts.historyOverride ?? messages.map((m) => ({ role: toChatRole(m.sender), content: m.text }));
     lastRequestRef.current = {
       message: userText,
       model: selectedModel,
       history: historySnapshot,
       geminiKey: opts.geminiKey || undefined,
       deepseekKey: opts.deepseekKey || undefined,
-      assistantStreamId: streamId
+      assistantStreamId: streamId,
+      contextPackId: opts.contextPackId
     };
+    setLastContextPackId(opts.contextPackId ?? null);
 
     setMessages((prev) => [...prev, userMsg, assistantMsg]);
     setInput('');
@@ -232,6 +242,7 @@ export function useChat() {
     setActiveStreamId(streamId);
 
     lastRequestRef.current = { ...last, assistantStreamId: streamId };
+    setLastContextPackId(last.contextPackId ?? null);
 
     setMessages((prev) =>
       prev.map((m) =>
@@ -262,6 +273,7 @@ export function useChat() {
     cancel,
     canRegenerate: lastRequestRef.current !== null && activeStreamId === null,
     regenerate,
+    lastContextPackId,
     input,
     setInput,
     selectedModel,

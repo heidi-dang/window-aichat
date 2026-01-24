@@ -6,7 +6,7 @@ import uuid
 import asyncio
 import threading
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List, Dict
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect, UploadFile, File
 from fastapi.exceptions import RequestValidationError
@@ -36,12 +36,23 @@ from window_aichat.schemas.api_models import (
     FileReadResponse,
     FileWriteResponse,
 )
+from window_aichat.core.context import PromptTemplate
+from window_aichat.core.tokens import Tokenizer
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("window_aichat.api.server")
 
 app = FastAPI(title="Window AI Chat Backend")
+
+MAX_CONTEXT_TOKENS = int(os.getenv("WINDOW_AICHAT_MAX_CONTEXT_TOKENS", "8000"))
+_prompt_template = PromptTemplate()
+_tokenizer = Tokenizer()
+
+def build_prompt_from_history(history: List[Dict[str, str]], user_message: str) -> str:
+    messages = _prompt_template.format_messages(history, user_message)
+    trimmed = _tokenizer.trim_context(messages, MAX_CONTEXT_TOKENS)
+    return "\n".join([f"{m.get('role', 'user')}: {m.get('content', '')}" for m in trimmed])
 
 def _error_payload(code: str, message: str, request_id: Optional[str], details: Optional[dict] = None) -> dict:
     payload: dict = {"error": {"code": code, "message": message}, "requestId": request_id}
@@ -180,12 +191,11 @@ async def websocket_chat(websocket: WebSocket):
                 await websocket.send_json({"type": "error", "error": {"code": "init_failed", "message": "Failed to initialize AI client"}})
                 continue
 
-            full_prompt = ""
+            history_dicts: List[Dict[str, str]] = []
             for msg in history:
-                role = msg.get("role", "user")
-                content = msg.get("content", "")
-                full_prompt += f"{role}: {content}\n"
-            full_prompt += f"user: {message}\n"
+                if isinstance(msg, dict):
+                    history_dicts.append({"role": str(msg.get("role", "user")), "content": str(msg.get("content", ""))})
+            full_prompt = build_prompt_from_history(history_dicts, str(message))
 
             if current_cancel is not None:
                 current_cancel.set()
@@ -240,11 +250,8 @@ async def chat(request: ChatRequest):
         
     client = get_ai_client(request.gemini_key, request.deepseek_key)
     
-    # Format history for the client
-    full_prompt = ""
-    for msg in request.history:
-        full_prompt += f"{msg.role}: {msg.content}\n"
-    full_prompt += f"user: {request.message}\n"
+    history_dicts: List[Dict[str, str]] = [{"role": msg.role, "content": msg.content} for msg in request.history]
+    full_prompt = build_prompt_from_history(history_dicts, request.message)
     
     try:
         if request.model == "deepseek" and client.deepseek_available:

@@ -611,6 +611,21 @@ if packaged_app is not None:
 
 
 if __name__ == "__main__":
-
-    uvicorn.run("backend:app", host="0.0.0.0", port=8000, reload=True)
+    host = os.getenv("WINDOW_AICHAT_HOST", "127.0.0.1")
+    port = int(os.getenv("WINDOW_AICHAT_PORT", "8000"))
+    try:
+        uvicorn.run("backend:app", host=host, port=port, reload=True)
+    except OSError as e:
+        if getattr(e, "winerror", None) == 10013:
+            fallback_host = "127.0.0.1" if host == "0.0.0.0" else host
+            for fallback_port in [port + 1, port + 2, 0]:
+                try:
+                    uvicorn.run("backend:app", host=fallback_host, port=fallback_port, reload=True)
+                    break
+                except OSError:
+                    continue
+            else:
+                raise
+        else:
+            raise
 
