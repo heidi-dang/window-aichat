@@ -283,6 +283,7 @@ jobs:
           timeout: 60s
           command_timeout: 15m
           script_stop: true
+          envs: GHCR_USER,GHCR_PAT
           script: |
             set -euo pipefail
             cd /opt/window-aichat
