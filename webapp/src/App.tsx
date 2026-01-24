@@ -2,7 +2,16 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import type * as MonacoEditor from 'monaco-editor';
 import { AnimatePresence, motion } from 'framer-motion';
 import './App.css';
-import { getStorageMode, setStorageMode, setToken as persistToken, clearToken as removeToken, getToken } from './utils/authStorage';
+import {
+  getStorageMode,
+  setStorageMode,
+  setToken as persistToken,
+  clearToken as removeToken,
+  getToken,
+  setCredentials,
+  getCredentials,
+  clearCredentials
+} from './utils/authStorage';
 import MonacoWrapper from './components/IDE/MonacoWrapper';
 import FileExplorer from './components/IDE/FileExplorer';
 import StatusBar from './components/IDE/StatusBar';
@@ -170,6 +179,7 @@ function App() {
   const [manualToken, setManualToken] = useState('');
   const [authToast, setAuthToast] = useState<string | null>(null);
   const [authTelemetry, setAuthTelemetry] = useState<{ count: number; lastAt?: string }>(() => ({ count: 0 }));
+  const [authAuditLog, setAuthAuditLog] = useState<Array<{ time: string; context: string }>>([]);
   const [authCountdown, setAuthCountdown] = useState(() => formatCountdown(decodeJwt(getToken())?.exp as number | null));
 
   // File System & Editor State
@@ -215,6 +225,12 @@ function App() {
   }, [authPayload]);
 
   const isAuthExpired = Boolean(authExpiry && authExpiry * 1000 <= Date.now());
+  const authRole = useMemo(() => {
+    const role = authPayload?.role ?? authPayload?.scope ?? authPayload?.roles;
+    if (!role) return 'standard';
+    if (Array.isArray(role)) return role.join(', ');
+    return String(role);
+  }, [authPayload]);
 
   const isAuthValid = Boolean(authToken && authPayload && (!authExpiry || authExpiry * 1000 > Date.now()));
 
@@ -226,6 +242,7 @@ function App() {
 
   const clearToken = () => {
     removeToken();
+    clearCredentials();
     setAuthToken('');
     setAuthPayload(null);
   };
@@ -233,6 +250,7 @@ function App() {
   const reportUnauthorized = (context: string) => {
     const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     setAuthTelemetry(prev => ({ count: prev.count + 1, lastAt: timestamp }));
+    setAuthAuditLog(prev => [{ time: timestamp, context }, ...prev].slice(0, 20));
     setAuthToast(`Login required for ${context}.`);
     setTimeout(() => setAuthToast(null), 3500);
   };
@@ -280,6 +298,7 @@ function App() {
       const data = (await res.json()) as { token?: string };
       if (data.token) {
         setToken(data.token);
+        setCredentials(authUsername.trim(), authPassword, authStorageMode);
         setShowAuthModal(false);
         setAuthPassword('');
       } else {
@@ -300,6 +319,51 @@ function App() {
     setShowTokenModal(false);
     setShowAuthModal(false);
     setAuthError(null);
+  };
+
+  const refreshToken = async () => {
+    setAuthError(null);
+    const creds = getCredentials();
+    if (!creds) {
+      setAuthError('No stored credentials. Please login again.');
+      return;
+    }
+    try {
+      const res = await fetch(`${API_BASE}/api/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: creds.username, password: creds.password })
+      });
+      if (!res.ok) {
+        const errorText = await readErrorText(res);
+        setAuthError(errorText);
+        return;
+      }
+      const data = (await res.json()) as { token?: string };
+      if (data.token) {
+        setToken(data.token);
+      } else {
+        setAuthError('No token returned by server.');
+      }
+    } catch (error) {
+      setAuthError(error instanceof Error ? error.message : 'Failed to refresh token.');
+    }
+  };
+
+  const copyToken = async () => {
+    if (!authToken) {
+      setAuthToast('No token to copy.');
+      setTimeout(() => setAuthToast(null), 2500);
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(authToken);
+      setAuthToast('Token copied to clipboard.');
+      setTimeout(() => setAuthToast(null), 2500);
+    } catch {
+      setAuthToast('Failed to copy token.');
+      setTimeout(() => setAuthToast(null), 2500);
+    }
   };
 
   const toggleStorageMode = () => {
@@ -1174,6 +1238,8 @@ function App() {
       <div className={`sidebar-area ${activeMobilePanel === 'sidebar' ? 'visible' : ''}`} style={{ width: sidebarWidth }} ref={sidebarRef}>
         <div className="sidebar-header">
           <h2>Window-AIChat</h2>
+          <span className="auth-role">{authRole}</span>
+          <span className="auth-countdown">{authCountdown}</span>
           <button
             className={`auth-badge ${isAuthValid ? 'auth-ok' : 'auth-missing'}`}
             onClick={() => setShowAuthModal(true)}
@@ -1272,6 +1338,15 @@ function App() {
           isLoading={isLoading}
           repoUrl={repoUrl}
         />
+        {!isAuthValid && (
+          <div className="auth-lock">
+            <div>
+              <strong>Login required</strong>
+              <p>Authenticate to access your workspace files.</p>
+            </div>
+            <button onClick={() => setShowAuthModal(true)}>Login</button>
+          </div>
+        )}
         <div className="resizer-handle" onMouseDown={startResizeSidebar}></div>
       </div>
 
@@ -1413,6 +1488,9 @@ function App() {
                 <button onClick={() => setShowTokenModal(true)}>
                   Paste Token Manually
                 </button>
+                <button onClick={() => void refreshToken()}>
+                  Refresh Token
+                </button>
               </div>
               <div className="auth-status">
                 <span>Status: {isAuthValid ? 'Authenticated' : 'Not authenticated'}</span>
@@ -1432,6 +1510,22 @@ function App() {
               <div className="auth-claims">
                 <div className="auth-claims-title">JWT Claims</div>
                 <pre>{authPayload ? JSON.stringify(authPayload, null, 2) : 'No token claims available.'}</pre>
+                <button onClick={() => void copyToken()}>Copy Token</button>
+              </div>
+              <div className="auth-audit">
+                <div className="auth-audit-title">Auth Audit Log</div>
+                {authAuditLog.length === 0 ? (
+                  <span>No unauthorized attempts yet.</span>
+                ) : (
+                  <ul>
+                    {authAuditLog.map((entry, index) => (
+                      <li key={`${entry.time}-${index}`}>
+                        <span>{entry.time}</span>
+                        <span>{entry.context}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
               </div>
             </div>
           </div>
