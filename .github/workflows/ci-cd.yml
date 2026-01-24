@@ -215,9 +215,14 @@ jobs:
       - name: Ensure remote deploy directories
         uses: appleboy/ssh-action@v1.0.0
         with:
+          debug: true
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.SSH_PORT || '22' }}
+          timeout: 60s
+          command_timeout: 10m
+          script_stop: true
           script: |
             set -euo pipefail
             mkdir -p /opt/window-aichat/.github/scripts
@@ -225,18 +230,27 @@ jobs:
       - name: Upload deployment files
         uses: appleboy/scp-action@v0.1.7
         with:
+          debug: true
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.SSH_PORT || '22' }}
+          timeout: 60s
+          command_timeout: 10m
           source: "docker-compose.prod.yml,nginx.conf,.github/scripts/healthcheck.sh"
           target: /opt/window-aichat
 
       - name: Deploy with Docker Compose
         uses: appleboy/ssh-action@v1.0.0
         with:
+          debug: true
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.SSH_PORT || '22' }}
+          timeout: 60s
+          command_timeout: 15m
+          script_stop: true
           script: |
             set -euo pipefail
             cd /opt/window-aichat
