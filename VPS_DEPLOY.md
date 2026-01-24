@@ -22,8 +22,11 @@ Set these in your repo settings → Secrets and variables → Actions:
 - `SSH_USER` (SSH username)
 - `SSH_PRIVATE_KEY` (private key that matches a public key in `~/.ssh/authorized_keys` on VPS)
 - `SSH_PORT` (optional, default `22`)
-- `GHCR_USER` (GitHub username that can read GHCR images)
-- `GHCR_PAT` (PAT with `read:packages` and (if private repo) `repo`)
+
+The deploy job logs into GHCR using the GitHub Actions token by default. You only need to set these if you want to override that behavior:
+
+- `GHCR_USER` (optional override; defaults to the workflow actor)
+- `GHCR_PAT` (optional override; defaults to `GITHUB_TOKEN`)
 
 ## How deploy works (Docker Compose)
 

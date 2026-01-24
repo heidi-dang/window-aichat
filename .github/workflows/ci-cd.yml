@@ -202,13 +202,16 @@ jobs:
     environment:
       name: production
       url: https://your-domain.duckdns.org
+    permissions:
+      contents: read
+      packages: read
     env:
       SSH_HOST: ${{ secrets.SSH_HOST }}
       SSH_USER: ${{ secrets.SSH_USER }}
       SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
       SSH_PORT: ${{ secrets.SSH_PORT || '22' }}
-      GHCR_USER: ${{ secrets.GHCR_USER }}
-      GHCR_PAT: ${{ secrets.GHCR_PAT }}
+      GHCR_USER: ${{ secrets.GHCR_USER || github.actor }}
+      GHCR_PAT: ${{ secrets.GHCR_PAT || secrets.GITHUB_TOKEN }}
 
     steps:
       - name: Checkout code
@@ -219,7 +222,7 @@ jobs:
         shell: bash
         run: |
           missing=0
-          for name in SSH_HOST SSH_USER SSH_PRIVATE_KEY GHCR_USER GHCR_PAT; do
+          for name in SSH_HOST SSH_USER SSH_PRIVATE_KEY; do
             if [ -z "${!name:-}" ]; then
               echo "missing ${name}"
               missing=1
