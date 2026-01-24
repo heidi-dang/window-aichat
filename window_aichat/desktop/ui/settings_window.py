@@ -4,7 +4,7 @@ import webbrowser
 import os
 import requests
 import google.generativeai as genai
-from ai_core import SecureConfig
+from window_aichat.config import SecureConfig
 import logging
 
 logger = logging.getLogger(__name__)

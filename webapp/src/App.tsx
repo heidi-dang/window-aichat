@@ -97,9 +97,9 @@ function App() {
   const [showPRPanel, setShowPRPanel] = useState(false);
   const [currentPR, setCurrentPR] = useState<PullRequest | null>(null);
   const [showDiffViewer, setShowDiffViewer] = useState(false);
-  const [diffOriginalContent, setDiffOriginalContent] = useState('');
-  const [diffModifiedContent, setDiffModifiedContent] = useState('');
-  const [diffFileName, setDiffFileName] = useState('');
+  const diffOriginalContent = '';
+  const diffModifiedContent = '';
+  const diffFileName = '';
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -598,39 +598,6 @@ function App() {
         text: `Error merging PR: ${error instanceof Error ? error.message : 'Unknown error'}`,
         timestamp: new Date().toLocaleTimeString()
       }]);
-    }
-  };
-
-  const compareFiles = async (file1Path: string, file2Path: string) => {
-    try {
-      // Read both files
-      const [res1, res2] = await Promise.all([
-        fetch(`${API_BASE}/api/fs/read`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ path: file1Path })
-        }),
-        fetch(`${API_BASE}/api/fs/read`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ path: file2Path })
-        })
-      ]);
-
-      if (res1.ok && res2.ok) {
-        const data1 = await res1.json();
-        const data2 = await res2.json();
-        
-        setDiffOriginalContent(data1.content);
-        setDiffModifiedContent(data2.content);
-        setDiffFileName(`${file1Path} → ${file2Path}`);
-        setShowDiffViewer(true);
-      } else {
-        alert('Failed to read one or both files for comparison');
-      }
-    } catch (error: unknown) {
-      console.error("Failed to compare files", error);
-      alert(`Failed to compare files: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   };
 
