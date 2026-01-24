@@ -231,6 +231,16 @@ jobs:
             echo "enabled=true" >> "${GITHUB_OUTPUT}"
           fi
 
+      - name: Validate SSH private key parses
+        if: steps.gate.outputs.enabled == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          keyfile="$(mktemp)"
+          printf '%s' "${SSH_PRIVATE_KEY}" | tr -d '\r' > "${keyfile}"
+          chmod 600 "${keyfile}"
+          ssh-keygen -y -f "${keyfile}" >/dev/null
+
       - name: Ensure remote deploy directories
         if: steps.gate.outputs.enabled == 'true'
         uses: appleboy/ssh-action@v1.0.0
@@ -295,87 +305,3 @@ jobs:
             bash .github/scripts/healthcheck.sh http://localhost
 
             docker image prune -f
-
-  deploy-to-vps:
-    name: Deploy to VPS (PM2)
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    needs: [backend, frontend]
-    if: >
-      github.ref == 'refs/heads/main' &&
-      (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
-      secrets.ENABLE_PM2_DEPLOY == '1'
-    env:
-      SSH_HOST: ${{ secrets.SSH_HOST }}
-      SSH_USER: ${{ secrets.SSH_USER }}
-      SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
-      SSH_PORT: ${{ secrets.SSH_PORT || '22' }}
-
-    steps:
-      - name: Gate VPS deploy on required secrets
-        id: gate
-        shell: bash
-        run: |
-          missing=0
-          for name in SSH_HOST SSH_USER SSH_PRIVATE_KEY; do
-            if [ -z "${!name:-}" ]; then
-              echo "missing ${name}"
-              missing=1
-            fi
-          done
-          if [ "${missing}" -eq 1 ]; then
-            echo "enabled=false" >> "${GITHUB_OUTPUT}"
-          else
-            echo "enabled=true" >> "${GITHUB_OUTPUT}"
-          fi
-
-      - name: Validate SSH private key parses
-        if: steps.gate.outputs.enabled == 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-          keyfile="$(mktemp)"
-          printf '%s' "${SSH_PRIVATE_KEY}" | tr -d '\r' > "${keyfile}"
-          chmod 600 "${keyfile}"
-          ssh-keygen -y -f "${keyfile}" >/dev/null
-
-      - name: SSH into VPS and trigger build
-        if: steps.gate.outputs.enabled == 'true'
-        uses: appleboy/ssh-action@v1.0.0
-        with:
-          debug: true
-          host: ${{ env.SSH_HOST }}
-          username: ${{ env.SSH_USER }}
-          key: ${{ env.SSH_PRIVATE_KEY }}
-          port: ${{ env.SSH_PORT }}
-          timeout: 60s
-          command_timeout: 20m
-          script_stop: true
-          script: |
-            cat << 'EOF' > ~/deploy.sh
-            #!/bin/bash
-            # 1. Navigate to project
-            cd /var/www/window-aichat || exit
-
-            # 2. Pull latest code from the branch
-            git pull origin main
-
-            # 3. Setup Backend
-            cd backend
-            npm install
-            npm run build
-            pm2 restart all || pm2 start dist/index.js --name "backend"
-
-            # 4. Setup Frontend
-            cd ../frontend
-            npm install
-            npm run build
-
-            # 5. Clean up (Optional: Restart Nginx if needed)
-            # sudo systemctl restart nginx
-
-            echo "🚀 Deployment Successful: $(date)"
-            EOF
-
-            chmod +x ~/deploy.sh
-            bash ~/deploy.sh
