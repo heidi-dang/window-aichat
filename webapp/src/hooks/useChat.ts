@@ -9,6 +9,16 @@ export interface ChatUiMessage {
   streamId?: string;
 }
 
+type ChatHistoryItem = { role: string; content: string };
+type LastRequestSnapshot = {
+  message: string;
+  model: string;
+  history: ChatHistoryItem[];
+  geminiKey?: string;
+  deepseekKey?: string;
+  assistantStreamId: string;
+};
+
 function describeError(error: unknown): string {
   if (error instanceof ApiError) {
     const requestSuffix = error.requestId ? ` (requestId: ${error.requestId})` : '';
@@ -37,10 +47,13 @@ export function useChat() {
   const [messages, setMessages] = useState<ChatUiMessage[]>([]);
   const [input, setInput] = useState('');
   const [selectedModel, setSelectedModel] = useState('gemini');
+  const [activeStreamId, setActiveStreamId] = useState<string | null>(null);
 
   const pushMessage = (msg: ChatUiMessage) => setMessages((prev) => [...prev, msg]);
   const wsRef = useRef<WebSocket | null>(null);
   const activeStreamIdRef = useRef<string | null>(null);
+  const lastRequestRef = useRef<LastRequestSnapshot | null>(null);
+  const setLoadingRef = useRef<((v: boolean) => void) | null>(null);
 
   useEffect(() => {
     return () => {
@@ -51,6 +64,7 @@ export function useChat() {
       }
       wsRef.current = null;
       activeStreamIdRef.current = null;
+      setActiveStreamId(null);
     };
   }, []);
 
@@ -62,47 +76,43 @@ export function useChat() {
     });
   };
 
-  const sendMessage = async (opts: { geminiKey: string; deepseekKey: string; setIsLoading: (v: boolean) => void }) => {
-    if (!input.trim()) return;
-
-    const userText = input;
-    const userMsg: ChatUiMessage = {
-      sender: 'You',
-      text: userText,
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-    };
-
-    const streamId = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-    activeStreamIdRef.current = streamId;
-    const assistantMsg: ChatUiMessage = {
-      sender: selectedModel === 'deepseek' ? 'DeepSeek' : 'Gemini',
-      text: '',
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      streamId
-    };
-
-    setMessages((prev) => [...prev, userMsg, assistantMsg]);
-    setInput('');
-    opts.setIsLoading(true);
-
+  const cancel = () => {
     try {
-      try {
-        wsRef.current?.send(JSON.stringify({ type: 'cancel' }));
-        wsRef.current?.close();
-      } catch {
-        // no-op
-      }
+      wsRef.current?.send(JSON.stringify({ type: 'cancel' }));
+    } catch {
+      // no-op
+    }
+    try {
+      wsRef.current?.close();
+    } catch {
+      // no-op
+    }
+    wsRef.current = null;
+    activeStreamIdRef.current = null;
+    setActiveStreamId(null);
+    setLoadingRef.current?.(false);
+  };
+
+  const startStream = async (req: {
+    message: string;
+    model: string;
+    history: ChatHistoryItem[];
+    geminiKey?: string;
+    deepseekKey?: string;
+    streamId: string;
+  }) => {
+    try {
+      cancel();
 
       const socket = new WebSocket(getWsUrl('/ws/chat'));
       wsRef.current = socket;
 
-      const history = messages.map((m) => ({ role: toChatRole(m.sender), content: m.text }));
-
       const finalize = () => {
-        if (activeStreamIdRef.current === streamId) {
+        if (activeStreamIdRef.current === req.streamId) {
           activeStreamIdRef.current = null;
+          setActiveStreamId(null);
         }
-        opts.setIsLoading(false);
+        setLoadingRef.current?.(false);
         try {
           socket.close();
         } catch {
@@ -114,11 +124,11 @@ export function useChat() {
         socket.onopen = () => {
           socket.send(JSON.stringify({
             type: 'start',
-            message: userText,
-            model: selectedModel,
-            history,
-            gemini_key: opts.geminiKey || undefined,
-            deepseek_key: opts.deepseekKey || undefined
+            message: req.message,
+            model: req.model,
+            history: req.history,
+            gemini_key: req.geminiKey || undefined,
+            deepseek_key: req.deepseekKey || undefined
           }));
           resolve();
         };
@@ -130,7 +140,7 @@ export function useChat() {
           const msg = JSON.parse(String(evt.data)) as any;
           if (msg?.type === 'chunk' && typeof msg.content === 'string') {
             setMessages((prev) =>
-              prev.map((m) => (m.streamId === streamId ? { ...m, text: m.text + msg.content } : m))
+              prev.map((m) => (m.streamId === req.streamId ? { ...m, text: m.text + msg.content } : m))
             );
             return;
           }
@@ -153,14 +163,93 @@ export function useChat() {
       };
 
       socket.onclose = () => {
-        if (activeStreamIdRef.current === streamId) {
+        if (activeStreamIdRef.current === req.streamId) {
           finalize();
         }
       };
     } catch (error: unknown) {
       pushSystemMessage(`Error: ${describeError(error)}`);
-      opts.setIsLoading(false);
+      setLoadingRef.current?.(false);
+      activeStreamIdRef.current = null;
+      setActiveStreamId(null);
     }
+  };
+
+  const sendMessage = async (opts: { geminiKey: string; deepseekKey: string; setIsLoading: (v: boolean) => void }) => {
+    if (!input.trim()) return;
+
+    setLoadingRef.current = opts.setIsLoading;
+
+    const userText = input;
+    const userMsg: ChatUiMessage = {
+      sender: 'You',
+      text: userText,
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    };
+
+    const streamId = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    activeStreamIdRef.current = streamId;
+    setActiveStreamId(streamId);
+
+    const assistantSender = selectedModel === 'deepseek' ? 'DeepSeek' : 'Gemini';
+    const assistantMsg: ChatUiMessage = {
+      sender: assistantSender,
+      text: '',
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      streamId
+    };
+
+    const historySnapshot = messages.map((m) => ({ role: toChatRole(m.sender), content: m.text }));
+    lastRequestRef.current = {
+      message: userText,
+      model: selectedModel,
+      history: historySnapshot,
+      geminiKey: opts.geminiKey || undefined,
+      deepseekKey: opts.deepseekKey || undefined,
+      assistantStreamId: streamId
+    };
+
+    setMessages((prev) => [...prev, userMsg, assistantMsg]);
+    setInput('');
+    opts.setIsLoading(true);
+
+    await startStream({
+      message: userText,
+      model: selectedModel,
+      history: historySnapshot,
+      geminiKey: opts.geminiKey || undefined,
+      deepseekKey: opts.deepseekKey || undefined,
+      streamId
+    });
+  };
+
+  const regenerate = async () => {
+    const last = lastRequestRef.current;
+    if (!last) return;
+
+    const streamId = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    activeStreamIdRef.current = streamId;
+    setActiveStreamId(streamId);
+
+    lastRequestRef.current = { ...last, assistantStreamId: streamId };
+
+    setMessages((prev) =>
+      prev.map((m) =>
+        m.streamId === last.assistantStreamId
+          ? { ...m, text: '', streamId, sender: last.model === 'deepseek' ? 'DeepSeek' : 'Gemini' }
+          : m
+      )
+    );
+
+    setLoadingRef.current?.(true);
+    await startStream({
+      message: last.message,
+      model: last.model,
+      history: last.history,
+      geminiKey: last.geminiKey,
+      deepseekKey: last.deepseekKey,
+      streamId
+    });
   };
 
   return {
@@ -168,6 +257,11 @@ export function useChat() {
     setMessages,
     pushMessage,
     pushSystemMessage,
+    isStreaming: activeStreamId !== null,
+    activeStreamId,
+    cancel,
+    canRegenerate: lastRequestRef.current !== null && activeStreamId === null,
+    regenerate,
     input,
     setInput,
     selectedModel,

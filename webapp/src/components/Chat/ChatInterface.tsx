@@ -1,6 +1,8 @@
 import React, { useRef, useEffect } from 'react';
 import { Send, Bot, User, Loader2 } from 'lucide-react';
 import { cn } from '../../lib/utils';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 interface Message {
   sender: string;
@@ -14,6 +16,9 @@ interface ChatInterfaceProps {
   input: string;
   setInput: (val: string) => void;
   onSend: () => void;
+  onCancel?: () => void;
+  onRegenerate?: () => void;
+  canRegenerate?: boolean;
   selectedModel: string;
   setSelectedModel: (val: string) => void;
   className?: string;
@@ -25,6 +30,9 @@ export const ChatInterface = React.memo(function ChatInterface({
   input,
   setInput,
   onSend,
+  onCancel,
+  onRegenerate,
+  canRegenerate,
   selectedModel,
   setSelectedModel,
   className
@@ -46,19 +54,39 @@ export const ChatInterface = React.memo(function ChatInterface({
     <div className={cn("flex flex-col h-full bg-card border-l border-border", className)}>
       <div className="p-4 border-b border-border flex items-center justify-between bg-muted/10">
         <h3 className="font-semibold text-sm">AI Assistant</h3>
-        <select 
-          value={selectedModel} 
-          onChange={(e) => setSelectedModel(e.target.value)}
-          className="text-xs bg-background border border-border rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-ring"
-        >
-          <option value="gemini">Gemini</option>
-          <option value="deepseek">DeepSeek</option>
-        </select>
+        <div className="flex items-center gap-2">
+          {onCancel && isLoading && (
+            <button
+              onClick={onCancel}
+              className="text-xs bg-background border border-border rounded px-2 py-1 hover:bg-muted/40"
+            >
+              Cancel
+            </button>
+          )}
+          {onRegenerate && canRegenerate && !isLoading && (
+            <button
+              onClick={onRegenerate}
+              className="text-xs bg-background border border-border rounded px-2 py-1 hover:bg-muted/40"
+            >
+              Regenerate
+            </button>
+          )}
+          <select 
+            value={selectedModel} 
+            onChange={(e) => setSelectedModel(e.target.value)}
+            className="text-xs bg-background border border-border rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-ring"
+          >
+            <option value="gemini">Gemini</option>
+            <option value="deepseek">DeepSeek</option>
+          </select>
+        </div>
       </div>
 
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
         {messages.map((msg, idx) => {
           const isUser = msg.sender === 'You';
+          const isStreamingPlaceholder = !isUser && isLoading && idx === messages.length - 1 && !msg.text.trim();
+          const shouldRenderMarkdown = !isUser && msg.sender !== 'System' && !isStreamingPlaceholder;
           return (
             <div key={idx} className={cn("flex gap-3", isUser ? "flex-row-reverse" : "flex-row")}>
               <div className={cn(
@@ -77,7 +105,19 @@ export const ChatInterface = React.memo(function ChatInterface({
                   <span>{msg.sender}</span>
                   <span>{msg.timestamp}</span>
                 </div>
-                <div className="whitespace-pre-wrap">{msg.text}</div>
+                {isStreamingPlaceholder ? (
+                  <div className="flex items-center gap-1">
+                    <span className="inline-block w-1.5 h-1.5 rounded-full bg-current animate-bounce [animation-delay:-0.2s]" />
+                    <span className="inline-block w-1.5 h-1.5 rounded-full bg-current animate-bounce [animation-delay:-0.1s]" />
+                    <span className="inline-block w-1.5 h-1.5 rounded-full bg-current animate-bounce" />
+                  </div>
+                ) : shouldRenderMarkdown ? (
+                  <div className="prose prose-invert max-w-none prose-pre:bg-black/30 prose-pre:border prose-pre:border-border prose-pre:rounded-md prose-code:before:content-[''] prose-code:after:content-['']">
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.text}</ReactMarkdown>
+                  </div>
+                ) : (
+                  <div className="whitespace-pre-wrap">{msg.text}</div>
+                )}
               </div>
             </div>
           );

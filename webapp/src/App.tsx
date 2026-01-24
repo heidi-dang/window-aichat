@@ -241,6 +241,9 @@ function App() {
           input={chat.input}
           setInput={chat.setInput}
           onSend={sendMessage}
+          onCancel={chat.isStreaming ? chat.cancel : undefined}
+          onRegenerate={chat.canRegenerate ? chat.regenerate : undefined}
+          canRegenerate={chat.canRegenerate}
           selectedModel={chat.selectedModel}
           setSelectedModel={chat.setSelectedModel}
           className="w-96 flex-shrink-0"
