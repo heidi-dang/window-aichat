@@ -1,4 +1,4 @@
-import os
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -6,6 +6,8 @@ from fastapi.testclient import TestClient
 
 @pytest.fixture()
 def client(tmp_path, monkeypatch):
+    repo_root = Path(__file__).resolve().parents[1]
+    monkeypatch.syspath_prepend(str(repo_root))
     monkeypatch.setenv("WINDOW_AICHAT_WORKSPACE_ROOT", str(tmp_path))
     monkeypatch.setenv("WINDOW_AICHAT_DB_URL", f"sqlite:///{tmp_path / 'test.db'}")
     monkeypatch.chdir(tmp_path)
