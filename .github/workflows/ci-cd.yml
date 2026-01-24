@@ -219,7 +219,7 @@ jobs:
         shell: bash
         run: |
           missing=0
-          for name in SSH_HOST SSH_USER SSH_PRIVATE_KEY; do
+          for name in SSH_HOST SSH_USER SSH_PRIVATE_KEY GHCR_USER GHCR_PAT; do
             if [ -z "${!name:-}" ]; then
               echo "missing ${name}"
               missing=1
@@ -291,9 +291,7 @@ jobs:
             export GHCR_REPO='${{ github.repository }}'
             export IMAGE_TAG="sha-${{ github.sha }}"
 
-            if [ -n "${GHCR_USER:-}" ] && [ -n "${GHCR_PAT:-}" ]; then
-              echo "${GHCR_PAT}" | docker login ghcr.io -u "${GHCR_USER}" --password-stdin
-            fi
+            echo "${GHCR_PAT}" | docker login ghcr.io -u "${GHCR_USER}" --password-stdin
 
             if command -v docker-compose >/dev/null 2>&1; then
               DC='docker-compose'
