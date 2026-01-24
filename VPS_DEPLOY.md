@@ -22,8 +22,6 @@ Set these in your repo settings → Secrets and variables → Actions:
 - `SSH_USER` (SSH username)
 - `SSH_PRIVATE_KEY` (private key that matches a public key in `~/.ssh/authorized_keys` on VPS)
 - `SSH_PORT` (optional, default `22`)
-- `GHCR_USER` (GitHub username that can read GHCR images)
-- `GHCR_PAT` (PAT with `read:packages` and (if private repo) `repo`)
 
 ## How deploy works (Docker Compose)
 
@@ -32,7 +30,7 @@ On push to `main`:
 1. CI builds and pushes backend + frontend images to GHCR with tag:
    - `sha-<full_git_sha>`
 2. Deploy job SSHes into the VPS and runs:
-   - `docker login ghcr.io`
+   - (optional) `docker login ghcr.io`
    - `docker compose -f docker-compose.prod.yml pull`
    - `docker compose -f docker-compose.prod.yml up -d --remove-orphans`
    - health checks (`/docs` and `/api/models`)
