@@ -19,6 +19,12 @@ interface FileEntry {
   path: string;
 }
 
+interface PullRequestFile {
+  name: string;
+  path: string;
+  changes: number;
+}
+
 interface PullRequest {
   id: string;
   title: string;
@@ -28,7 +34,7 @@ interface PullRequest {
   author: string;
   createdAt: string;
   status: 'open' | 'closed' | 'merged' | 'approved';
-  files: unknown[];
+  files: PullRequestFile[];
   aiAnalysis?: {
     summary: string;
     risks: string[];
