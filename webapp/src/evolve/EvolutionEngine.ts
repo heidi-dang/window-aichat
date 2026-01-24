@@ -428,7 +428,10 @@ export class EvolutionEngine {
 
   private async getAllCodeFiles(apiBase: string): Promise<string[]> {
     try {
-      const response = await fetch(`${apiBase}/api/fs/list`);
+      const token = localStorage.getItem('token') || '';
+      const response = await fetch(`${apiBase}/api/fs/list`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined
+      });
       if (!response.ok) {
         console.warn('[EvolveAI] Failed to list files:', response.status, response.statusText);
         return [];
@@ -450,9 +453,13 @@ export class EvolutionEngine {
 
   private async getFileContent(apiBase: string, path: string): Promise<string> {
     try {
+      const token = localStorage.getItem('token') || '';
       const response = await fetch(`${apiBase}/api/fs/read`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {})
+        },
         body: JSON.stringify({ path })
       });
       const data = await response.json();

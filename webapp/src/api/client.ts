@@ -26,6 +26,16 @@ export class ApiError extends Error {
 export const API_BASE =
   (import.meta as { env: Record<string, string | undefined> }).env?.VITE_API_BASE?.replace(/\/$/, '') || '';
 
+function withAuthHeaders(init?: RequestInit): RequestInit {
+  const token = localStorage.getItem('token') || '';
+  if (!token) return init ?? {};
+  const headers = new Headers(init?.headers ?? undefined);
+  if (!headers.has('Authorization')) {
+    headers.set('Authorization', `Bearer ${token}`);
+  }
+  return { ...init, headers };
+}
+
 function isApiErrorEnvelope(value: unknown): value is ApiErrorEnvelope {
   if (!value || typeof value !== 'object') return false;
   const v = value as Record<string, unknown>;
@@ -44,7 +54,7 @@ async function readBodyText(res: Response): Promise<string> {
 }
 
 export async function apiFetchJson<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, init);
+  const res = await fetch(`${API_BASE}${path}`, withAuthHeaders(init));
   if (res.ok) {
     return (await res.json()) as T;
   }

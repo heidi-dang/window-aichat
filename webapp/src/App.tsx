@@ -161,6 +161,7 @@ function App() {
   const [isAutonomousRunning, setIsAutonomousRunning] = useState(false);
   const [autonomousLogs, setAutonomousLogs] = useState<string[]>([]);
   const autonomousAbortRef = useRef<AbortController | null>(null);
+  const [autonomousAuthError, setAutonomousAuthError] = useState<string | null>(null);
 
   const autonomousPresets = [
     { label: 'Refactor module', task: 'Refactor the currently active module for readability and performance.' },
@@ -225,7 +226,10 @@ function App() {
 
   const fetchFiles = async () => {
     try {
-      const res = await fetch(`${API_BASE}/api/fs/list`);
+      const token = localStorage.getItem('token') || '';
+      const res = await fetch(`${API_BASE}/api/fs/list`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined
+      });
       if (res.ok) {
         const data = await res.json();
         setFiles(data);
@@ -250,9 +254,13 @@ function App() {
 
   const openFile = async (path: string) => {
     try {
+      const token = localStorage.getItem('token') || '';
       const res = await fetch(`${API_BASE}/api/fs/read`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {})
+        },
         body: JSON.stringify({ path })
       });
       if (res.ok) {
@@ -292,9 +300,13 @@ function App() {
     const content = editorRef.current ? editorRef.current.getValue() : fileContent;
     
     try {
+      const token = localStorage.getItem('token') || '';
       const res = await fetch(`${API_BASE}/api/fs/write`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {})
+        },
         body: JSON.stringify({ path: activeFile, content })
       });
       if (res.ok) {
@@ -432,6 +444,7 @@ function App() {
     autonomousAbortRef.current = abortController;
     setIsAutonomousRunning(true);
     setAutonomousLogs([]);
+    setAutonomousAuthError(null);
 
     setMessages(prev => [...prev, {
       sender: 'System',
@@ -458,6 +471,9 @@ function App() {
         },
         onEvent: (event) => {
           if (abortController.signal.aborted) return;
+          if (event.stage === 'persist' && event.message.toLowerCase().includes('authentication')) {
+            setAutonomousAuthError('Authentication required to persist files. Add your token in Settings.');
+          }
           setMessages(prev => [...prev, {
             sender: 'System',
             text: `[Autonomous] ${event.message}`,
@@ -1145,6 +1161,9 @@ function App() {
             </div>
             <div className="autonomous-modal-body">
               <p className="autonomous-description">Describe the task and let the AI execute it end-to-end.</p>
+              {autonomousAuthError && (
+                <div className="autonomous-warning">{autonomousAuthError}</div>
+              )}
               <div className="autonomous-presets">
                 {autonomousPresets.map((preset) => (
                   <button key={preset.label} onClick={() => applyAutonomousPreset(preset.task)}>

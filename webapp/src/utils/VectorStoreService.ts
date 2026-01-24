@@ -69,7 +69,10 @@ class VectorStoreService {
     this.isIndexing = true;
     try {
         console.log('[VectorStore] Indexing workspace...');
-        const listRes = await fetch(`${apiBase}/api/fs/list`);
+        const token = localStorage.getItem('token') || '';
+        const listRes = await fetch(`${apiBase}/api/fs/list`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : undefined
+        });
         if (!listRes.ok) throw new Error('Failed to list files');
         const rawFiles = (await listRes.json()) as unknown;
         const files: FsEntry[] = Array.isArray(rawFiles) ? (rawFiles as unknown[]).flatMap((v) => {
@@ -87,7 +90,10 @@ class VectorStoreService {
             try {
                 const readRes = await fetch(`${apiBase}/api/fs/read`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: {
+                      'Content-Type': 'application/json',
+                      ...(token ? { Authorization: `Bearer ${token}` } : {})
+                    },
                     body: JSON.stringify({ path: file.path })
                 });
                 if (readRes.ok) {
