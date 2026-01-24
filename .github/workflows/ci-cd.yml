@@ -283,18 +283,31 @@ jobs:
           envs: GHCR_USER,GHCR_PAT
           script: |
             set -euo pipefail
-            cd /opt/window-aichat
-
-            export GHCR_REPO='${{ github.repository }}'
-            export IMAGE_TAG="sha-${{ github.sha }}"
-
-            echo "${GHCR_PAT}" | docker login ghcr.io -u "${GHCR_USER}" --password-stdin
+            set -x
 
             if command -v docker-compose >/dev/null 2>&1; then
               DC='docker-compose'
             else
               DC='docker compose'
             fi
+
+            on_error() {
+              code="$?"
+              echo "deploy failed with exit code ${code}"
+              docker ps -a || true
+              ${DC} -f /opt/window-aichat/docker-compose.prod.yml ps || true
+              ${DC} -f /opt/window-aichat/docker-compose.prod.yml logs --no-color --tail=200 || true
+              exit "${code}"
+            }
+            trap on_error ERR
+
+            cd /opt/window-aichat
+
+            export GHCR_REPO='${{ github.repository }}'
+            export IMAGE_TAG="sha-${{ github.sha }}"
+
+            export DOCKER_CONFIG="$(mktemp -d)"
+            echo "${GHCR_PAT}" | docker login ghcr.io -u "${GHCR_USER}" --password-stdin
 
             $DC -f docker-compose.prod.yml pull
             $DC -f docker-compose.prod.yml up -d --remove-orphans
@@ -303,3 +316,5 @@ jobs:
             bash .github/scripts/healthcheck.sh http://localhost
 
             docker image prune -f
+            docker logout ghcr.io || true
+            rm -rf "${DOCKER_CONFIG}" || true
