@@ -3,6 +3,7 @@ class TreeSitterService {
   private parser: { parse: (content: string) => { rootNode: unknown }; setLanguage: (lang: unknown) => void } | null = null;
   private isInitializing = false;
   private language: unknown | null = null;
+  private initFailed = false;
 
   private constructor() {}
 
@@ -14,41 +15,55 @@ class TreeSitterService {
   }
 
   async init() {
-    if (this.parser || this.isInitializing) return;
+    if (this.parser || this.isInitializing || this.initFailed) return;
     this.isInitializing = true;
 
     try {
       console.log('[TreeSitter] Initializing...');
       
       // Dynamic import to handle module resolution safely
-      const ParserModule = (await import('web-tree-sitter')) as unknown as { default?: unknown };
-      const ParserClass = (ParserModule.default ?? ParserModule) as unknown as {
-        init: () => Promise<void>;
-        Language: { load: (url: string) => Promise<unknown> };
+      const ParserModule = (await import('web-tree-sitter')) as unknown as {
+        default?: unknown;
+        Parser?: unknown;
+        init?: () => Promise<void>;
+        Language?: { load: (url: string) => Promise<unknown> };
+      };
+      const parserApi = (ParserModule.default ?? ParserModule) as {
+        Parser?: unknown;
+        init?: () => Promise<void>;
+        Language?: { load: (url: string) => Promise<unknown> };
+      };
+      const ParserClass = (parserApi.Parser ?? parserApi) as unknown as {
+        init?: () => Promise<void>;
+        Language?: { load: (url: string) => Promise<unknown> };
         new (): { parse: (content: string) => { rootNode: unknown }; setLanguage: (lang: unknown) => void };
       };
 
+      const initFn = parserApi.init ?? ParserClass.init;
+      const Language = parserApi.Language ?? ParserClass.Language;
+
       console.log('[TreeSitter] Resolved ParserClass:', ParserClass);
 
-      if (typeof ParserClass.init !== 'function') {
-          throw new Error(`ParserClass.init is not a function. Keys: ${Object.keys(ParserClass)}`);
+      if (typeof initFn !== 'function' || !Language) {
+        console.warn('[TreeSitter] init() not available in this environment, disabling TreeSitter.');
+        this.initFailed = true;
+        return;
       }
 
-      // Initialize the library
-      await ParserClass.init();
+      await initFn();
       this.parser = new ParserClass();
       
-      // Load TypeScript language from unpkg
-      // Using a fixed version to ensure compatibility
-      const langUrl = 'https://unpkg.com/tree-sitter-typescript@0.20.5/tree-sitter-typescript.wasm';
+      // Load TypeScript language via Vite-resolved URL to ensure correct MIME type
+      const langUrl = new URL('tree-sitter-typescript/tree-sitter-typescript.wasm', import.meta.url).toString();
       console.log(`[TreeSitter] Loading language from ${langUrl}`);
       
-      this.language = await ParserClass.Language.load(langUrl);
+      this.language = await Language.load(langUrl);
       this.parser.setLanguage(this.language);
       
       console.log('[TreeSitter] Ready.');
     } catch (error) {
       console.error('[TreeSitter] Initialization failed:', error);
+      this.initFailed = true;
     } finally {
       this.isInitializing = false;
     }

@@ -116,9 +116,6 @@ class VectorStoreService {
     // Try to use Tree-Sitter for structural chunking
     try {
       const treeSitter = TreeSitterService.getInstance();
-      // Initialize if needed (it handles its own init state)
-      await treeSitter.init();
-      
       const functions = await treeSitter.getFunctions(content);
       if (functions.length > 0) {
         console.log(`[VectorStore] Using TreeSitter chunking: found ${functions.length} functions.`);

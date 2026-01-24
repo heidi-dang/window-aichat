@@ -108,17 +108,23 @@ export class AgentLoop {
 
       // Persistence: Write to backend filesystem
       try {
+        const token = localStorage.getItem('token') || '';
         const saveRes = await fetch(`${options.apiBase}/api/fs/write`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { Authorization: `Bearer ${token}` } : {})
+          },
           body: JSON.stringify({ path: filename, content: code })
         });
         if (saveRes.ok) {
            onLog(`[Agent] Persisted ${filename} to backend.`);
            onEvent?.({ type: 'tool', stage: 'persist', message: `Persisted ${filename} to backend` });
         } else {
-           onLog(`[Agent] Failed to persist ${filename} to backend.`);
-           onEvent?.({ type: 'tool', stage: 'persist', message: `Failed to persist ${filename} to backend` });
+           const errorText = await saveRes.text();
+           const detail = errorText || `${saveRes.status} ${saveRes.statusText}`;
+           onLog(`[Agent] Failed to persist ${filename} (${detail}).`);
+           onEvent?.({ type: 'tool', stage: 'persist', message: `Failed to persist ${filename}: ${detail}` });
         }
       } catch (err) {
         onLog(`[Agent] Error persisting ${filename}: ${err}`);
