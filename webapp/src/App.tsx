@@ -154,12 +154,19 @@ function App() {
   // EvolveAI State
   const [showEvolveAI, setShowEvolveAI] = useState(false);
   const [showLivingDocs, setShowLivingDocs] = useState(false);
+  const [showAutonomousModal, setShowAutonomousModal] = useState(false);
 
   // Autonomous Mode State
   const [autonomousTask, setAutonomousTask] = useState('');
   const [isAutonomousRunning, setIsAutonomousRunning] = useState(false);
   const [autonomousLogs, setAutonomousLogs] = useState<string[]>([]);
   const autonomousAbortRef = useRef<AbortController | null>(null);
+
+  const autonomousPresets = [
+    { label: 'Refactor module', task: 'Refactor the currently active module for readability and performance.' },
+    { label: 'Fix errors', task: 'Scan the project for TypeScript errors and fix them.' },
+    { label: 'Generate docs', task: 'Generate or refresh documentation for the current module.' }
+  ];
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -235,6 +242,10 @@ function App() {
         timestamp: new Date().toLocaleTimeString()
       }]);
     }
+  };
+
+  const applyAutonomousPreset = (task: string) => {
+    setAutonomousTask(task);
   };
 
   const openFile = async (path: string) => {
@@ -439,6 +450,11 @@ function App() {
         onLog: (message) => {
           if (abortController.signal.aborted) return;
           setAutonomousLogs(prev => [...prev, message]);
+          setMessages(prev => [...prev, {
+            sender: 'AI Tool',
+            text: `[Autonomous] ${message}`,
+            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+          }]);
         },
         onEvent: (event) => {
           if (abortController.signal.aborted) return;
@@ -968,6 +984,9 @@ function App() {
           <button onClick={() => setShowLivingDocs(!showLivingDocs)}>
             📚 Living Docs
           </button>
+          <button onClick={() => setShowAutonomousModal(true)}>
+            🤖 Autonomous Mode
+          </button>
         </div>
 
         {showSettings && (
@@ -1000,42 +1019,6 @@ function App() {
             <button className="save-btn" onClick={saveSettings}>Save</button>
           </div>
         )}
-
-        <div className="sidebar-section">
-          <h4>Autonomous Mode</h4>
-          <textarea
-            className="autonomous-input"
-            value={autonomousTask}
-            onChange={(e) => setAutonomousTask(e.target.value)}
-            placeholder="Describe the task for autonomous execution..."
-            rows={3}
-          />
-          <div className="autonomous-actions">
-            <button
-              onClick={() => void startAutonomousMode()}
-              disabled={!autonomousTask.trim() || isAutonomousRunning}
-            >
-              {isAutonomousRunning ? 'Running…' : 'Start Autonomous'}
-            </button>
-            <button
-              onClick={stopAutonomousMode}
-              disabled={!isAutonomousRunning}
-            >
-              Stop
-            </button>
-          </div>
-          <div className="autonomous-log">
-            {autonomousLogs.length === 0 ? (
-              <span className="autonomous-empty">No autonomous logs yet.</span>
-            ) : (
-              autonomousLogs.slice(-8).map((log, index) => (
-                <div key={`${log}-${index}`} className="autonomous-log-line">
-                  {log}
-                </div>
-              ))
-            )}
-          </div>
-        </div>
 
         <div className="sidebar-section">
           <button onClick={() => void cloneRepo()} disabled={isLoading || !repoUrl}>
@@ -1147,6 +1130,57 @@ function App() {
                 originalFileName={diffFileName}
                 modifiedFileName={diffFileName}
               />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Autonomous Mode Modal */}
+      {showAutonomousModal && (
+        <div className="modal-overlay">
+          <div className="modal-content autonomous-modal">
+            <div className="modal-header">
+              <h3>🤖 Autonomous Mode</h3>
+              <button onClick={() => setShowAutonomousModal(false)} className="close-btn">✕</button>
+            </div>
+            <div className="autonomous-modal-body">
+              <p className="autonomous-description">Describe the task and let the AI execute it end-to-end.</p>
+              <div className="autonomous-presets">
+                {autonomousPresets.map((preset) => (
+                  <button key={preset.label} onClick={() => applyAutonomousPreset(preset.task)}>
+                    {preset.label}
+                  </button>
+                ))}
+              </div>
+              <textarea
+                className="autonomous-input"
+                value={autonomousTask}
+                onChange={(e) => setAutonomousTask(e.target.value)}
+                placeholder="Describe the task for autonomous execution..."
+                rows={4}
+              />
+              <div className="autonomous-actions">
+                <button
+                  onClick={() => void startAutonomousMode()}
+                  disabled={!autonomousTask.trim() || isAutonomousRunning}
+                >
+                  {isAutonomousRunning ? 'Running…' : 'Start Autonomous'}
+                </button>
+                <button onClick={stopAutonomousMode} disabled={!isAutonomousRunning}>
+                  Stop
+                </button>
+              </div>
+              <div className="autonomous-log">
+                {autonomousLogs.length === 0 ? (
+                  <span className="autonomous-empty">No autonomous logs yet.</span>
+                ) : (
+                  autonomousLogs.slice(-12).map((log, index) => (
+                    <div key={`${log}-${index}`} className="autonomous-log-line">
+                      {log}
+                    </div>
+                  ))
+                )}
+              </div>
             </div>
           </div>
         </div>
