@@ -4,9 +4,7 @@ import threading
 import json
 import os
 import re
-import sys
 from pathlib import Path
-import google.generativeai as genai
 import requests
 import time
 import random
@@ -17,17 +15,17 @@ from typing import Optional, Dict, List
 import difflib
 import queue
 import logging
-from github_handler import GitHubHandler
 from cryptography.fernet import Fernet
-import os
 import shutil
-from ai_core import AIChatClient, SecureConfig, setup_logging
-from ui.settings_window import SettingsWindow
-from ui.dev_tool_window import DevToolWindow
-from ui.code_chat_window import CodeChatWindow
-from ui.theme_manager import ThemeManager
-from ui.ai_provider import ProviderFactory
-from ui.markdown_renderer import MarkdownRenderer
+from window_aichat.core.ai_client import AIChatClient
+from window_aichat.services.github import GitHubHandler
+from window_aichat.utils.logging_config import setup_logging
+from window_aichat.desktop.ui.settings_window import SettingsWindow
+from window_aichat.desktop.ui.dev_tool_window import DevToolWindow
+from window_aichat.desktop.ui.code_chat_window import CodeChatWindow
+from window_aichat.desktop.ui.theme_manager import ThemeManager
+from window_aichat.desktop.ui.ai_provider import ProviderFactory
+from window_aichat.desktop.ui.markdown_renderer import MarkdownRenderer
 
 # Setup logging at module level
 setup_logging()
@@ -91,8 +89,6 @@ class ChatApp:
             token = self.chat_client.config.get("github_token", "")
 
             try:
-                from window_aichat.services.github import GitHubHandler
-
                 self.gh_handler = GitHubHandler(self.repo_cache_dir, token=token)
                 logger.info("GitHubHandler initialized successfully")
             except Exception as e:
