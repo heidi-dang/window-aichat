@@ -1,6 +1,6 @@
 # VPS Automated Deploy (Backend + Frontend)
 
-This repo deploys automatically to your VPS on every push to `main` using GitHub Actions.
+This repo can deploy automatically to your VPS on every push to `main` using GitHub Actions.
 
 ## One-time VPS setup
 
@@ -25,7 +25,15 @@ Set these in your repo settings → Secrets and variables → Actions:
 - `GHCR_USER` (GitHub username that can read GHCR images)
 - `GHCR_PAT` (PAT with `read:packages` and (if private repo) `repo`)
 
-## How deploy works
+### Optional (PM2 + git pull deploy)
+
+If your VPS runs Node services with PM2 and your deploy flow is `git pull` + `npm run build`, set:
+
+- `VPS_IP`
+- `VPS_USER`
+- `VPS_SSH_KEY`
+
+## How deploy works (Docker Compose)
 
 On push to `main`:
 
@@ -36,6 +44,14 @@ On push to `main`:
    - `docker compose -f docker-compose.prod.yml pull`
    - `docker compose -f docker-compose.prod.yml up -d --remove-orphans`
    - health checks (`/docs` and `/api/models`)
+
+## How deploy works (PM2)
+
+On push to `main` (and if `VPS_IP/VPS_USER/VPS_SSH_KEY` secrets are present):
+
+1. GitHub Actions SSHes into the VPS
+2. It writes `~/deploy.sh` on the VPS and executes it
+3. The script pulls `main`, builds backend + frontend, and restarts PM2
 
 ## Manual rollback
 

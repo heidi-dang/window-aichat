@@ -295,3 +295,73 @@ jobs:
             bash .github/scripts/healthcheck.sh http://localhost
 
             docker image prune -f
+
+  deploy-to-vps:
+    name: Deploy to VPS (PM2)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [backend, frontend]
+    if: >
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    env:
+      VPS_IP: ${{ secrets.VPS_IP }}
+      VPS_USER: ${{ secrets.VPS_USER }}
+      VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+
+    steps:
+      - name: Gate VPS deploy on required secrets
+        id: gate
+        shell: bash
+        run: |
+          missing=0
+          for name in VPS_IP VPS_USER VPS_SSH_KEY; do
+            if [ -z "${!name:-}" ]; then
+              echo "missing ${name}"
+              missing=1
+            fi
+          done
+          if [ "${missing}" -eq 1 ]; then
+            echo "enabled=false" >> "${GITHUB_OUTPUT}"
+          else
+            echo "enabled=true" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: SSH into VPS and trigger build
+        if: steps.gate.outputs.enabled == 'true'
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ env.VPS_IP }}
+          username: ${{ env.VPS_USER }}
+          key: ${{ env.VPS_SSH_KEY }}
+          timeout: 60s
+          command_timeout: 20m
+          script_stop: true
+          script: |
+            cat << 'EOF' > ~/deploy.sh
+            #!/bin/bash
+            # 1. Navigate to project
+            cd /var/www/window-aichat || exit
+
+            # 2. Pull latest code from the branch
+            git pull origin main
+
+            # 3. Setup Backend
+            cd backend
+            npm install
+            npm run build
+            pm2 restart all || pm2 start dist/index.js --name "backend"
+
+            # 4. Setup Frontend
+            cd ../frontend
+            npm install
+            npm run build
+
+            # 5. Clean up (Optional: Restart Nginx if needed)
+            # sudo systemctl restart nginx
+
+            echo "🚀 Deployment Successful: $(date)"
+            EOF
+
+            chmod +x ~/deploy.sh
+            bash ~/deploy.sh
