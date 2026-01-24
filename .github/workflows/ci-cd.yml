@@ -139,12 +139,6 @@ jobs:
         working-directory: ./webapp
         run: npm run test --if-present
 
-      - name: Build frontend
-        working-directory: ./webapp
-        env:
-          NODE_OPTIONS: --max-old-space-size=4096
-        run: npm run build
-
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
