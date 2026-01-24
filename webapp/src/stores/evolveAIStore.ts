@@ -11,7 +11,7 @@ interface EvolveAIState {
   
   // Performance optimization
   lastAnalysisTime: number;
-  analysisCache: Map<string, { data: any; timestamp: number }>;
+  analysisCache: Map<string, { data: unknown; timestamp: number }>;
   
   // Actions
   setInsights: (insights: PredictiveInsight[]) => void;
@@ -21,8 +21,8 @@ interface EvolveAIState {
   
   // Optimized actions
   updateInsights: (insights: PredictiveInsight[]) => void;
-  getCachedAnalysis: (key: string) => any | null;
-  setCachedAnalysis: (key: string, data: any) => void;
+  getCachedAnalysis: (key: string) => unknown | null;
+  setCachedAnalysis: (key: string, data: unknown) => void;
   clearCache: () => void;
 }
 

@@ -2,23 +2,23 @@ import { create } from 'zustand';
 import { devtools } from 'zustand/middleware';
 
 interface DocumentationState {
-  sections: any[];
+  sections: unknown[];
   isSyncing: boolean;
   lastSyncTime: number;
   needsUpdate: boolean;
   
   // Performance optimization
-  syncCache: Map<string, { data: any; timestamp: number }>;
+  syncCache: Map<string, { data: unknown; timestamp: number }>;
   
   // Actions
-  setSections: (sections: any[]) => void;
+  setSections: (sections: unknown[]) => void;
   setIsSyncing: (isSyncing: boolean) => void;
   setNeedsUpdate: (needsUpdate: boolean) => void;
   
   // Optimized actions
-  updateSections: (sections: any[]) => void;
-  getCachedSync: (key: string) => any | null;
-  setCachedSync: (key: string, data: any) => void;
+  updateSections: (sections: unknown[]) => void;
+  getCachedSync: (key: string) => unknown | null;
+  setCachedSync: (key: string, data: unknown) => void;
   clearSyncCache: () => void;
 }
 
