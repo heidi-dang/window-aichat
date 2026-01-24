@@ -14,10 +14,13 @@ export interface SearchResult {
   score: number;
 }
 
+type Embedder = (text: string, opts: { pooling: 'mean'; normalize: true }) => Promise<{ data: ArrayLike<number> }>;
+type FsEntry = { type: string; name: string; path: string };
+
 class VectorStoreService {
   private static instance: VectorStoreService;
-  private embedder: any | null = null;
-  private voy: any | null = null;
+  private embedder: Embedder | null = null;
+  private voy: Voy | null = null;
   private documents: Record<string, SearchResult> = {}; // Map ID to content
   private isInitializing = false;
   private isIndexing = false;
@@ -38,9 +41,9 @@ class VectorStoreService {
     try {
       console.log('[VectorStore] Initializing embedding model...');
       // Use a quantized model for browser efficiency
-      this.embedder = await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2', {
+      this.embedder = (await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2', {
         quantized: true,
-      });
+      })) as unknown as Embedder;
 
       console.log('[VectorStore] Initializing Voy index...');
       this.voy = new Voy({
@@ -68,7 +71,13 @@ class VectorStoreService {
         console.log('[VectorStore] Indexing workspace...');
         const listRes = await fetch(`${apiBase}/api/fs/list`);
         if (!listRes.ok) throw new Error('Failed to list files');
-        const files: any[] = await listRes.json();
+        const rawFiles = (await listRes.json()) as unknown;
+        const files: FsEntry[] = Array.isArray(rawFiles) ? (rawFiles as unknown[]).flatMap((v) => {
+          if (!v || typeof v !== 'object') return [];
+          const obj = v as Record<string, unknown>;
+          if (typeof obj.type !== 'string' || typeof obj.name !== 'string' || typeof obj.path !== 'string') return [];
+          return [{ type: obj.type, name: obj.name, path: obj.path }];
+        }) : [];
 
         for (const file of files) {
             if (file.type !== 'file') continue;
@@ -148,7 +157,7 @@ class VectorStoreService {
         id,
         title: filePath,
         url: filePath,
-        embeddings: embedding as any
+        embeddings: embedding
       });
 
       this.documents[id] = {
@@ -171,12 +180,11 @@ class VectorStoreService {
     const queryEmbedding = Array.from(output.data);
 
     // Voy search returns { id: string, score: number }
-    const results = this.voy.search(queryEmbedding as any, limit);
+    const results = this.voy.search(queryEmbedding, limit) as unknown as { hits: Array<{ id: string; score: number }> };
 
-    return results.hits.map((hit: any) => ({
-      ...this.documents[hit.id],
-      score: hit.score
-    }));
+    return results.hits
+      .filter((hit) => typeof hit.id === 'string' && typeof hit.score === 'number' && Boolean(this.documents[hit.id]))
+      .map((hit) => ({ ...this.documents[hit.id], score: hit.score }));
   }
 }
 

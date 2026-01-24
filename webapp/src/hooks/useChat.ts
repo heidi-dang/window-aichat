@@ -50,6 +50,7 @@ export function useChat() {
   const [selectedModel, setSelectedModel] = useState('gemini');
   const [activeStreamId, setActiveStreamId] = useState<string | null>(null);
   const [lastContextPackId, setLastContextPackId] = useState<string | null>(null);
+  const [hasLastRequest, setHasLastRequest] = useState(false);
 
   const pushMessage = (msg: ChatUiMessage) => setMessages((prev) => [...prev, msg]);
   const wsRef = useRef<WebSocket | null>(null);
@@ -139,24 +140,26 @@ export function useChat() {
 
       socket.onmessage = (evt) => {
         try {
-          const msg = JSON.parse(String(evt.data)) as any;
-          if (msg?.type === 'chunk' && typeof msg.content === 'string') {
+          const parsed = JSON.parse(String(evt.data)) as unknown;
+          if (!parsed || typeof parsed !== 'object') return;
+          const msg = parsed as { type?: unknown; content?: unknown; error?: { message?: unknown } };
+          if (msg.type === 'chunk' && typeof msg.content === 'string') {
             setMessages((prev) =>
               prev.map((m) => (m.streamId === req.streamId ? { ...m, text: m.text + msg.content } : m))
             );
             return;
           }
-          if (msg?.type === 'done') {
+          if (msg.type === 'done') {
             finalize();
             return;
           }
-          if (msg?.type === 'error') {
-            const message = typeof msg?.error?.message === 'string' ? msg.error.message : 'Streaming failed';
+          if (msg.type === 'error') {
+            const message = typeof msg.error?.message === 'string' ? msg.error.message : 'Streaming failed';
             pushSystemMessage(`Error: ${message}`);
             finalize();
             return;
           }
-          if (msg?.type === 'cancelled') {
+          if (msg.type === 'cancelled') {
             finalize();
           }
         } catch {
@@ -218,6 +221,7 @@ export function useChat() {
       contextPackId: opts.contextPackId
     };
     setLastContextPackId(opts.contextPackId ?? null);
+    setHasLastRequest(true);
 
     setMessages((prev) => [...prev, userMsg, assistantMsg]);
     setInput('');
@@ -271,7 +275,7 @@ export function useChat() {
     isStreaming: activeStreamId !== null,
     activeStreamId,
     cancel,
-    canRegenerate: lastRequestRef.current !== null && activeStreamId === null,
+    canRegenerate: hasLastRequest && activeStreamId === null,
     regenerate,
     lastContextPackId,
     input,

@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 @pytest.fixture()
 def client(tmp_path, monkeypatch):
     monkeypatch.setenv("WINDOW_AICHAT_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WINDOW_AICHAT_DB_URL", f"sqlite:///{tmp_path / 'test.db'}")
     monkeypatch.chdir(tmp_path)
     from window_aichat.api.server import app
 
@@ -42,4 +43,3 @@ def test_chat_returns_error_envelope_when_no_models_available(client: TestClient
     assert "error" in body
     assert "code" in body["error"]
     assert "message" in body["error"]
-

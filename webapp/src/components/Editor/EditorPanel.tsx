@@ -1,6 +1,7 @@
 import React from 'react';
 import Editor from '@monaco-editor/react';
 import { Save, FileCode, Terminal as TerminalIcon, Maximize2, ExternalLink } from 'lucide-react';
+import type { OnMount } from '@monaco-editor/react';
 import { cn } from '../../lib/utils';
 import Terminal from '../Terminal';
 
@@ -15,7 +16,7 @@ interface EditorPanelProps {
   showTerminal: boolean;
   setShowTerminal: (val: boolean) => void;
   agentLogs: string[];
-  handleEditorDidMount: any;
+  handleEditorDidMount: OnMount;
   className?: string;
   diagnostics?: string;
 }

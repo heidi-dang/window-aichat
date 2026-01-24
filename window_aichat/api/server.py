@@ -7,12 +7,15 @@ import asyncio
 import threading
 from pathlib import Path
 from typing import Optional, List, Dict
+from datetime import datetime, timezone
+from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect, UploadFile, File
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect, UploadFile, File, Depends, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import uvicorn
+from pydantic import BaseModel, Field
 
 # Import from internal packages
 try:
@@ -27,6 +30,7 @@ from window_aichat.schemas.api_models import (
     FileWriteRequest,
     ToolRequest,
     VSCodeRequest,
+    ChatMessage,
     ChatRequest,
     ChatResponse,
     CompletionRequest,
@@ -38,21 +42,93 @@ from window_aichat.schemas.api_models import (
 )
 from window_aichat.core.context import PromptTemplate
 from window_aichat.core.tokens import Tokenizer
+from window_aichat.db.session import get_db, engine
+from window_aichat.db.models import Base, User, ProjectSession, SessionMessage, MemoryItem, EmbeddingItem, AuditLog
+from window_aichat.db.auth import hash_password, verify_password, issue_token, decode_token
+from window_aichat.db.limits import RateLimiter, RateLimitConfig
+from sqlalchemy.orm import Session
+from sqlalchemy import select, delete
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("window_aichat.api.server")
 
-app = FastAPI(title="Window AI Chat Backend")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    Base.metadata.create_all(bind=engine)
+    yield
+
+app = FastAPI(title="Window AI Chat Backend", lifespan=lifespan)
 
 MAX_CONTEXT_TOKENS = int(os.getenv("WINDOW_AICHAT_MAX_CONTEXT_TOKENS", "8000"))
 _prompt_template = PromptTemplate()
 _tokenizer = Tokenizer()
+_require_auth = os.getenv("WINDOW_AICHAT_REQUIRE_AUTH", "0") == "1"
+_rate_limiter = RateLimiter(
+    RateLimitConfig(
+        window_seconds=int(os.getenv("WINDOW_AICHAT_RATE_LIMIT_WINDOW", "60")),
+        max_requests=int(os.getenv("WINDOW_AICHAT_RATE_LIMIT_MAX", "240")),
+    )
+)
 
 def build_prompt_from_history(history: List[Dict[str, str]], user_message: str) -> str:
     messages = _prompt_template.format_messages(history, user_message)
     trimmed = _tokenizer.trim_context(messages, MAX_CONTEXT_TOKENS)
     return "\n".join([f"{m.get('role', 'user')}: {m.get('content', '')}" for m in trimmed])
+
+
+def _get_request_ip(request: Request) -> str:
+    forwarded = request.headers.get("X-Forwarded-For")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    client = request.client
+    return client.host if client else "unknown"
+
+
+def _get_bearer_token(request: Request) -> Optional[str]:
+    header = request.headers.get("Authorization")
+    if not header:
+        return None
+    if not header.lower().startswith("bearer "):
+        return None
+    return header.split(" ", 1)[1].strip()
+
+
+def get_current_user(request: Request, db: Session = Depends(get_db)) -> Optional[User]:
+    token = _get_bearer_token(request)
+    if not token:
+        return None
+    payload = decode_token(token)
+    if not payload:
+        return None
+    user_id = payload.get("sub")
+    if not user_id:
+        return None
+    user = db.get(User, str(user_id))
+    return user
+
+
+def require_user(user: Optional[User] = Depends(get_current_user)) -> User:
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized")
+    return user
+
+
+@app.middleware("http")
+async def rate_limit_middleware(request: Request, call_next):
+    key = f"ip:{_get_request_ip(request)}"
+    allowed, remaining, reset_in = _rate_limiter.allow(key)
+    if not allowed:
+        request_id = getattr(request.state, "request_id", None)
+        return JSONResponse(
+            status_code=429,
+            content=_error_payload("rate_limited", "Too many requests", request_id, details={"resetInSeconds": reset_in}),
+            headers={"X-RateLimit-Remaining": str(remaining), "X-RateLimit-Reset": str(reset_in)},
+        )
+    response = await call_next(request)
+    response.headers["X-RateLimit-Remaining"] = str(remaining)
+    response.headers["X-RateLimit-Reset"] = str(reset_in)
+    return response
 
 def _error_payload(code: str, message: str, request_id: Optional[str], details: Optional[dict] = None) -> dict:
     payload: dict = {"error": {"code": code, "message": message}, "requestId": request_id}
@@ -139,6 +215,268 @@ def get_ai_client(gemini_key: str = None, deepseek_key: str = None):
     # Re-configure APIs with new keys
     client.configure_apis()
     return client
+
+# V2 Auth + Persistence Endpoints
+
+class AuthRegisterRequest(BaseModel):
+    username: str = Field(min_length=1, max_length=120)
+    password: str = Field(min_length=8, max_length=512)
+
+
+class AuthLoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+class AuthResponse(BaseModel):
+    token: str
+
+
+class SessionCreateRequest(BaseModel):
+    name: str = "New Session"
+    model: str = "gemini"
+    pinnedFiles: List[str] = Field(default_factory=list)
+
+
+class SessionUpdateRequest(BaseModel):
+    name: Optional[str] = None
+    model: Optional[str] = None
+    pinnedFiles: Optional[List[str]] = None
+    messages: Optional[List[ChatMessage]] = None
+
+
+class EmbeddingUpsertRequest(BaseModel):
+    namespace: str
+    ref: str
+    content: str
+    vector: List[float]
+
+
+class EmbeddingSearchRequest(BaseModel):
+    namespace: str
+    vector: List[float]
+    topK: int = 8
+
+
+class MemoryUpsertRequest(BaseModel):
+    kind: str
+    key: str
+    value: str
+    source: Optional[str] = None
+    confidence: float = 0.7
+
+
+MODEL_CAPABILITIES = {
+    "gemini": {"maxTokens": 8192, "streaming": True, "strengths": ["latency", "general"]},
+    "deepseek": {"maxTokens": 8192, "streaming": True, "strengths": ["coding", "reasoning"]},
+}
+
+
+@app.post("/api/auth/register", response_model=AuthResponse)
+async def auth_register(req: AuthRegisterRequest, db: Session = Depends(get_db)):
+    existing = db.execute(select(User).where(User.username == req.username)).scalar_one_or_none()
+    if existing:
+        raise HTTPException(status_code=409, detail="Username already exists")
+    user = User(username=req.username, password_hash=hash_password(req.password))
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return AuthResponse(token=issue_token(user.id, user.username))
+
+
+@app.post("/api/auth/login", response_model=AuthResponse)
+async def auth_login(req: AuthLoginRequest, db: Session = Depends(get_db)):
+    user = db.execute(select(User).where(User.username == req.username)).scalar_one_or_none()
+    if not user or not verify_password(req.password, user.password_hash):
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+    return AuthResponse(token=issue_token(user.id, user.username))
+
+
+@app.get("/api/sessions")
+async def list_sessions(user: User = Depends(require_user), db: Session = Depends(get_db)):
+    sessions = db.execute(
+        select(ProjectSession).where(ProjectSession.user_id == user.id).order_by(ProjectSession.updated_at.desc())
+    ).scalars().all()
+    return [
+        {
+            "id": s.id,
+            "name": s.name,
+            "model": s.model,
+            "pinnedFiles": s.pinned_files(),
+            "updatedAt": s.updated_at.isoformat(),
+        }
+        for s in sessions
+    ]
+
+
+@app.post("/api/sessions")
+async def create_session(req: SessionCreateRequest, user: User = Depends(require_user), db: Session = Depends(get_db)):
+    s = ProjectSession(user_id=user.id, name=req.name, model=req.model)
+    s.set_pinned_files(req.pinnedFiles)
+    db.add(s)
+    db.commit()
+    db.refresh(s)
+    return {"id": s.id}
+
+
+@app.get("/api/sessions/{session_id}")
+async def get_session(session_id: str, user: User = Depends(require_user), db: Session = Depends(get_db)):
+    s = db.get(ProjectSession, session_id)
+    if not s or s.user_id != user.id:
+        raise HTTPException(status_code=404, detail="Session not found")
+    msgs = db.execute(select(SessionMessage).where(SessionMessage.session_id == s.id).order_by(SessionMessage.created_at.asc())).scalars().all()
+    return {
+        "id": s.id,
+        "name": s.name,
+        "model": s.model,
+        "pinnedFiles": s.pinned_files(),
+        "messages": [{"role": m.role, "content": m.content} for m in msgs],
+        "updatedAt": s.updated_at.isoformat(),
+    }
+
+
+@app.put("/api/sessions/{session_id}")
+async def update_session(session_id: str, req: SessionUpdateRequest, user: User = Depends(require_user), db: Session = Depends(get_db)):
+    s = db.get(ProjectSession, session_id)
+    if not s or s.user_id != user.id:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if req.name is not None:
+        s.name = req.name
+    if req.model is not None:
+        s.model = req.model
+    if req.pinnedFiles is not None:
+        s.set_pinned_files(req.pinnedFiles)
+    if req.messages is not None:
+        db.execute(delete(SessionMessage).where(SessionMessage.session_id == s.id))
+        for m in req.messages:
+            db.add(SessionMessage(session_id=s.id, role=m.role, content=m.content))
+    s.updated_at = datetime.now(timezone.utc)
+    db.add(s)
+    db.commit()
+    return {"status": "ok"}
+
+
+@app.get("/api/memory")
+async def list_memory(user: User = Depends(require_user), db: Session = Depends(get_db)):
+    items = db.execute(select(MemoryItem).where(MemoryItem.user_id == user.id).order_by(MemoryItem.updated_at.desc())).scalars().all()
+    return [
+        {
+            "id": m.id,
+            "kind": m.kind,
+            "key": m.key,
+            "value": m.value,
+            "source": m.source,
+            "confidence": m.confidence,
+            "createdAt": m.created_at.isoformat(),
+            "updatedAt": m.updated_at.isoformat(),
+        }
+        for m in items
+    ]
+
+
+@app.post("/api/memory")
+async def upsert_memory(req: MemoryUpsertRequest, user: User = Depends(require_user), db: Session = Depends(get_db)):
+    existing = db.execute(select(MemoryItem).where(MemoryItem.user_id == user.id, MemoryItem.kind == req.kind, MemoryItem.key == req.key)).scalar_one_or_none()
+    if existing:
+        existing.value = req.value
+        existing.source = req.source
+        existing.confidence = float(req.confidence)
+        existing.updated_at = datetime.now(timezone.utc)
+        db.add(existing)
+        db.commit()
+        return {"status": "updated", "id": existing.id}
+    item = MemoryItem(user_id=user.id, kind=req.kind, key=req.key, value=req.value, source=req.source, confidence=float(req.confidence))
+    db.add(item)
+    db.commit()
+    db.refresh(item)
+    return {"status": "created", "id": item.id}
+
+
+@app.delete("/api/memory/{memory_id}")
+async def delete_memory(memory_id: str, user: User = Depends(require_user), db: Session = Depends(get_db)):
+    item = db.get(MemoryItem, memory_id)
+    if not item or item.user_id != user.id:
+        raise HTTPException(status_code=404, detail="Memory not found")
+    db.delete(item)
+    db.commit()
+    return {"status": "deleted"}
+
+
+@app.get("/api/audit")
+async def list_audit(user: User = Depends(require_user), db: Session = Depends(get_db)):
+    rows = db.execute(select(AuditLog).where(AuditLog.user_id == user.id).order_by(AuditLog.created_at.desc()).limit(100)).scalars().all()
+    return [
+        {
+            "id": r.id,
+            "action": r.action,
+            "path": r.path,
+            "bytes": r.bytes,
+            "requestId": r.request_id,
+            "ip": r.ip,
+            "createdAt": r.created_at.isoformat(),
+        }
+        for r in rows
+    ]
+
+
+def _cosine(a: List[float], b: List[float]) -> float:
+    if not a or not b or len(a) != len(b):
+        return -1.0
+    dot = sum(x * y for x, y in zip(a, b))
+    na = sum(x * x for x in a) ** 0.5
+    nb = sum(y * y for y in b) ** 0.5
+    if na == 0 or nb == 0:
+        return -1.0
+    return dot / (na * nb)
+
+
+@app.post("/api/embeddings/upsert")
+async def upsert_embedding(req: EmbeddingUpsertRequest, user: User = Depends(require_user), db: Session = Depends(get_db)):
+    if not req.vector:
+        raise HTTPException(status_code=400, detail="Empty vector")
+    existing = db.execute(
+        select(EmbeddingItem).where(
+            EmbeddingItem.user_id == user.id,
+            EmbeddingItem.namespace == req.namespace,
+            EmbeddingItem.ref == req.ref,
+        )
+    ).scalar_one_or_none()
+    if existing:
+        existing.content = req.content
+        existing.set_vector(req.vector)
+        db.add(existing)
+        db.commit()
+        return {"status": "updated", "id": existing.id}
+    item = EmbeddingItem(user_id=user.id, namespace=req.namespace, ref=req.ref, content=req.content, vector_json="[]", dims=0)
+    item.set_vector(req.vector)
+    db.add(item)
+    db.commit()
+    db.refresh(item)
+    return {"status": "created", "id": item.id}
+
+
+@app.post("/api/embeddings/search")
+async def search_embeddings(req: EmbeddingSearchRequest, user: User = Depends(require_user), db: Session = Depends(get_db)):
+    top_k = max(1, min(int(req.topK), 50))
+    rows = db.execute(
+        select(EmbeddingItem).where(EmbeddingItem.user_id == user.id, EmbeddingItem.namespace == req.namespace)
+    ).scalars().all()
+    scored = []
+    for r in rows:
+        vec = r.vector()
+        if len(vec) != len(req.vector):
+            continue
+        scored.append((r, _cosine(req.vector, vec)))
+    scored.sort(key=lambda t: t[1], reverse=True)
+    out = []
+    for r, score in scored[:top_k]:
+        out.append({"ref": r.ref, "content": r.content, "score": score})
+    return {"results": out}
+
+
+@app.get("/api/models")
+async def list_models():
+    return {"models": MODEL_CAPABILITIES}
 
 # Endpoints
 
@@ -243,6 +581,109 @@ async def websocket_chat(websocket: WebSocket):
     except WebSocketDisconnect:
         logger.info("WebSocket disconnected")
 
+
+@app.websocket("/ws/tools")
+async def websocket_tools(websocket: WebSocket):
+    await websocket.accept()
+    current_cancel: Optional[threading.Event] = None
+    current_task: Optional[asyncio.Task] = None
+
+    try:
+        while True:
+            data = await websocket.receive_text()
+            try:
+                payload = json.loads(data)
+            except json.JSONDecodeError:
+                await websocket.send_json({"type": "tool", "stage": "error", "message": "Invalid JSON"})
+                continue
+
+            msg_type = payload.get("type", "run")
+            if msg_type == "cancel":
+                if current_cancel is not None:
+                    current_cancel.set()
+                if current_task is not None:
+                    current_task.cancel()
+                await websocket.send_json({"type": "tool", "stage": "cancelled", "message": "Cancelled"})
+                continue
+
+            if msg_type != "run":
+                await websocket.send_json({"type": "tool", "stage": "error", "message": "Unknown message type"})
+                continue
+
+            tool = payload.get("tool", "analyze")
+            code = payload.get("code", "")
+            gemini_key = payload.get("gemini_key")
+            deepseek_key = payload.get("deepseek_key")
+
+            if not AI_CORE_AVAILABLE:
+                await websocket.send_json({"type": "tool", "stage": "error", "message": "AI features unavailable"})
+                continue
+
+            try:
+                client = get_ai_client(gemini_key, deepseek_key)
+            except Exception:
+                logger.error("Error initializing client", exc_info=True)
+                await websocket.send_json({"type": "tool", "stage": "error", "message": "Failed to initialize AI client"})
+                continue
+
+            prompt = ""
+            if tool == "analyze":
+                prompt = f"Analyze the following code and provide insights:\n\n{code}"
+            elif tool == "explain":
+                prompt = f"Explain the following code in simple terms:\n\n{code}"
+            elif tool == "refactor":
+                prompt = f"Refactor the following code to improve quality and readability:\n\n{code}"
+            elif tool == "docs":
+                prompt = f"Generate documentation for the following code:\n\n{code}"
+            else:
+                prompt = f"Perform task '{tool}' on the following code:\n\n{code}"
+
+            if current_cancel is not None:
+                current_cancel.set()
+            if current_task is not None:
+                current_task.cancel()
+
+            cancel_flag = threading.Event()
+            current_cancel = cancel_flag
+
+            await websocket.send_json({"type": "tool", "stage": "start", "message": f"Running tool: {tool}", "progress": 0})
+
+            async def _run_stream():
+                loop = asyncio.get_running_loop()
+                q: asyncio.Queue = asyncio.Queue()
+
+                def _producer():
+                    try:
+                        model_name = "gemini" if client.gemini_available else "deepseek"
+                        for chunk in client.stream_chat(prompt, model_name):
+                            if cancel_flag.is_set():
+                                break
+                            asyncio.run_coroutine_threadsafe(
+                                q.put({"type": "tool", "stage": "output", "message": chunk}), loop
+                            )
+                        asyncio.run_coroutine_threadsafe(q.put({"type": "tool", "stage": "done", "message": "Done", "progress": 1}), loop)
+                    except Exception:
+                        logger.error("Tool streaming error", exc_info=True)
+                        asyncio.run_coroutine_threadsafe(
+                            q.put({"type": "tool", "stage": "error", "message": "Tool run failed"}), loop
+                        )
+
+                threading.Thread(target=_producer, daemon=True).start()
+
+                while True:
+                    item = await q.get()
+                    await websocket.send_json(item)
+                    if item.get("stage") in {"done", "error"}:
+                        break
+
+            current_task = asyncio.create_task(_run_stream())
+            try:
+                await current_task
+            except asyncio.CancelledError:
+                pass
+    except WebSocketDisconnect:
+        logger.info("Tools WebSocket disconnected")
+
 @app.post("/api/chat")
 async def chat(request: ChatRequest):
     if not AI_CORE_AVAILABLE:
@@ -254,20 +695,33 @@ async def chat(request: ChatRequest):
     full_prompt = build_prompt_from_history(history_dicts, request.message)
     
     try:
-        if request.model == "deepseek" and client.deepseek_available:
-            response = client.ask_deepseek(full_prompt)
-            return ChatResponse(content=response, model="deepseek")
-        elif client.gemini_available:
-            response = client.ask_gemini(full_prompt)
-            return ChatResponse(content=response, model="gemini")
+        requested = (request.model or "gemini").lower()
+        candidates: List[str] = []
+        if requested in {"auto", "router"}:
+            candidates = ["deepseek", "gemini"]
         else:
-            detail_msg = "No AI model available."
-            if not client.gemini_available:
-                detail_msg += f" Gemini Error: {client.gemini_error}"
-            if request.model == "deepseek" and not client.deepseek_available:
-                detail_msg += f" DeepSeek Error: {client.deepseek_error}"
-            
-            raise HTTPException(status_code=400, detail=detail_msg)
+            candidates = [requested, "gemini", "deepseek"]
+
+        tried: List[str] = []
+        for model_name in candidates:
+            if model_name == "gemini" and not client.gemini_available:
+                continue
+            if model_name == "deepseek" and not client.deepseek_available:
+                continue
+            tried.append(model_name)
+            response = client.ask_deepseek(full_prompt) if model_name == "deepseek" else client.ask_gemini(full_prompt)
+            if isinstance(response, str) and response.startswith("Error:"):
+                continue
+            return ChatResponse(content=response, model=model_name)
+
+        detail_msg = "No AI model available."
+        if tried:
+            detail_msg = f"All models failed: {', '.join(tried)}"
+        if not client.gemini_available:
+            detail_msg += f" Gemini Error: {client.gemini_error}"
+        if not client.deepseek_available:
+            detail_msg += f" DeepSeek Error: {client.deepseek_error}"
+        raise HTTPException(status_code=400, detail=detail_msg)
     except HTTPException:
         raise
     except Exception as e:
@@ -394,11 +848,32 @@ async def read_file(request: FileReadRequest):
         raise
 
 @app.post("/api/fs/write")
-async def write_file(request: FileWriteRequest):
+async def write_file(
+    request: FileWriteRequest,
+    http_request: Request,
+    db: Session = Depends(get_db),
+    user: Optional[User] = Depends(get_current_user),
+):
     try:
+        if _require_auth and user is None:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized")
         file_path = get_safe_path(request.path)
         file_path.parent.mkdir(parents=True, exist_ok=True)
         file_path.write_text(request.content, encoding="utf-8")
+        try:
+            db.add(
+                AuditLog(
+                    user_id=user.id if user else None,
+                    action="fs_write",
+                    path=str(file_path),
+                    bytes=len(request.content.encode("utf-8")),
+                    request_id=getattr(http_request.state, "request_id", None),
+                    ip=_get_request_ip(http_request),
+                )
+            )
+            db.commit()
+        except Exception:
+            db.rollback()
         return FileWriteResponse(status="success", path=str(file_path))
     except HTTPException:
         raise
@@ -407,8 +882,15 @@ async def write_file(request: FileWriteRequest):
         raise
 
 @app.post("/api/fs/upload")
-async def upload_file(file: UploadFile = File(...)):
+async def upload_file(
+    http_request: Request,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    user: Optional[User] = Depends(get_current_user),
+):
     try:
+        if _require_auth and user is None:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized")
         filename = Path(file.filename or "upload.bin").name
         target_path = get_safe_path(str(Path("uploads") / filename))
         target_path.parent.mkdir(parents=True, exist_ok=True)
@@ -422,6 +904,20 @@ async def upload_file(file: UploadFile = File(...)):
                     break
                 await f.write(chunk)
 
+        try:
+            db.add(
+                AuditLog(
+                    user_id=user.id if user else None,
+                    action="fs_upload",
+                    path=str(target_path),
+                    bytes=int(target_path.stat().st_size) if target_path.exists() else 0,
+                    request_id=getattr(http_request.state, "request_id", None),
+                    ip=_get_request_ip(http_request),
+                )
+            )
+            db.commit()
+        except Exception:
+            db.rollback()
         return FileWriteResponse(status="success", path=str(target_path))
     except HTTPException:
         raise

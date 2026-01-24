@@ -254,7 +254,9 @@ function App() {
     try {
       await api.uploadFile(file);
       workspace.fetchFiles();
-    } catch {}
+    } catch (error: unknown) {
+      chat.pushSystemMessage(`Upload failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
     setIsLoading(false);
   };
 

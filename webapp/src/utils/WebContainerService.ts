@@ -2,6 +2,9 @@ import { WebContainer } from '@webcontainer/api';
 import type { FileSystemTree } from '@webcontainer/api';
 import * as api from '../api/routes';
 
+type WebContainerProcess = { output: ReadableStream<string>; exit: Promise<number> };
+type SpawnOptions = { cwd?: string };
+
 class WebContainerService {
   private static instance: WebContainer | null = null;
   private static bootPromise: Promise<WebContainer> | null = null;
@@ -37,7 +40,8 @@ class WebContainerService {
 
   static async runCommand(command: string, args: string[] = [], outputCallback?: (data: string) => void) {
     const instance = await this.getInstance();
-    const process = await (instance.spawn as any)(command, args);
+    const spawn = instance.spawn as unknown as (cmd: string, argv?: string[], options?: SpawnOptions) => Promise<WebContainerProcess>;
+    const process = await spawn(command, args);
     
     if (outputCallback) {
       process.output.pipeTo(new WritableStream({
@@ -51,16 +55,20 @@ class WebContainerService {
   }
 
   private static setTreeFile(tree: FileSystemTree, pathParts: string[], contents: string) {
-    let cursor: any = tree;
+    let cursor = tree as unknown as Record<string, unknown>;
     for (let i = 0; i < pathParts.length; i++) {
       const part = pathParts[i];
       const isLast = i === pathParts.length - 1;
       if (isLast) {
-        cursor[part] = { file: { contents } };
+        cursor[part] = { file: { contents } } as unknown;
         return;
       }
-      if (!cursor[part]) cursor[part] = { directory: {} };
-      cursor = cursor[part].directory;
+      const current = cursor[part];
+      if (!current || typeof current !== 'object' || !('directory' in current)) {
+        cursor[part] = { directory: {} } as unknown;
+      }
+      const next = cursor[part] as { directory?: unknown };
+      cursor = (next.directory ?? {}) as Record<string, unknown>;
     }
   }
 
@@ -94,7 +102,8 @@ class WebContainerService {
     if (this.webappDepsInstalled) return;
     outputCallback?.('Installing webapp dependencies...\n');
     const instance = await this.getInstance();
-    const process = await (instance.spawn as any)('npm', ['install'], { cwd: '/webapp' });
+    const spawn = instance.spawn as unknown as (cmd: string, argv?: string[], options?: SpawnOptions) => Promise<WebContainerProcess>;
+    const process = await spawn('npm', ['install'], { cwd: '/webapp' });
     if (outputCallback) {
       process.output.pipeTo(new WritableStream({
         write(data) {
@@ -114,7 +123,8 @@ class WebContainerService {
     await this.ensureWebappDependencies(outputCallback);
     outputCallback?.('Running webapp tests...\n');
     const instance = await this.getInstance();
-    const process = await (instance.spawn as any)('npm', ['test'], { cwd: '/webapp' });
+    const spawn = instance.spawn as unknown as (cmd: string, argv?: string[], options?: SpawnOptions) => Promise<WebContainerProcess>;
+    const process = await spawn('npm', ['test'], { cwd: '/webapp' });
     if (outputCallback) {
       process.output.pipeTo(new WritableStream({
         write(data) {

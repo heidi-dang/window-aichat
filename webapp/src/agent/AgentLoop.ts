@@ -87,7 +87,7 @@ export class AgentLoop {
       onEvent?.({ type: 'tool', stage: 'write', message: 'Writing code to filesystem…' });
       
       // Extract filename from code or default to 'agent_script.js'
-      const filenameMatch = code.match(/\/\/\s*filename:\s*([\w\.-]+)/);
+      const filenameMatch = code.match(/\/\/\s*filename:\s*([\w.-]+)/);
       const filename = filenameMatch ? filenameMatch[1] : 'agent_script.js';
       
       await WebContainerService.writeFile(filename, code);
@@ -150,7 +150,7 @@ export class AgentLoop {
     onEvent?.({ type: 'tool', stage: 'error', message: 'Max attempts reached. Task failed.' });
   }
 
-  static async generatePlan(prompt: string, options: AgentOptions): Promise<any> {
+  static async generatePlan(prompt: string, options: AgentOptions): Promise<unknown> {
     try {
         const res = await fetch(`${options.apiBase}/api/chat`, {
           method: 'POST',

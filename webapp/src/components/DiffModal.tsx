@@ -19,7 +19,8 @@ const DiffModal: React.FC<DiffModalProps> = ({ original, modified, filename, onA
   const persistProvenance = (accepted: boolean) => {
     try {
       const raw = localStorage.getItem('artifact_provenance_v1');
-      const prev = raw ? (JSON.parse(raw) as any[]) : [];
+      let prev: unknown = raw ? JSON.parse(raw) : [];
+      if (!Array.isArray(prev)) prev = [];
       const entry = {
         id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
         accepted,
@@ -27,7 +28,7 @@ const DiffModal: React.FC<DiffModalProps> = ({ original, modified, filename, onA
         createdAt: Date.now(),
         provenance: provenance || null
       };
-      localStorage.setItem('artifact_provenance_v1', JSON.stringify([entry, ...prev].slice(0, 200)));
+      localStorage.setItem('artifact_provenance_v1', JSON.stringify([entry, ...(prev as unknown[])].slice(0, 200)));
     } catch {
       // no-op
     }

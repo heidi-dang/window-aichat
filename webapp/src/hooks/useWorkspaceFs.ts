@@ -17,7 +17,10 @@ export function useWorkspaceFs() {
   };
 
   useEffect(() => {
-    void fetchFiles();
+    const id = window.setTimeout(() => {
+      void fetchFiles();
+    }, 0);
+    return () => window.clearTimeout(id);
   }, []);
 
   const openFile = async (path: string) => {
@@ -67,4 +70,3 @@ export function useWorkspaceFs() {
     openInVSCode
   };
 }
-

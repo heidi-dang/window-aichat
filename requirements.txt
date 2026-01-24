@@ -10,8 +10,8 @@ aiofiles
 pyinstaller
 psutil
 sqlalchemy
+alembic
 python-jose[cryptography]
 httpx
-python-dotenv
 jose
 tiktoken

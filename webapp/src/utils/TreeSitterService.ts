@@ -1,8 +1,8 @@
 class TreeSitterService {
   private static instance: TreeSitterService;
-  private parser: any | null = null;
+  private parser: { parse: (content: string) => { rootNode: unknown }; setLanguage: (lang: unknown) => void } | null = null;
   private isInitializing = false;
-  private language: any | null = null;
+  private language: unknown | null = null;
 
   private constructor() {}
 
@@ -21,8 +21,12 @@ class TreeSitterService {
       console.log('[TreeSitter] Initializing...');
       
       // Dynamic import to handle module resolution safely
-      const ParserModule = await import('web-tree-sitter');
-      const ParserClass = (ParserModule as any).default || ParserModule;
+      const ParserModule = (await import('web-tree-sitter')) as unknown as { default?: unknown };
+      const ParserClass = (ParserModule.default ?? ParserModule) as unknown as {
+        init: () => Promise<void>;
+        Language: { load: (url: string) => Promise<unknown> };
+        new (): { parse: (content: string) => { rootNode: unknown }; setLanguage: (lang: unknown) => void };
+      };
 
       console.log('[TreeSitter] Resolved ParserClass:', ParserClass);
 
@@ -50,11 +54,11 @@ class TreeSitterService {
     }
   }
 
-  getParser(): any | null {
+  getParser() {
     return this.parser;
   }
 
-  getLanguage(): any | null {
+  getLanguage() {
     return this.language;
   }
 
@@ -71,17 +75,24 @@ class TreeSitterService {
         'class_declaration'
       ]);
 
-      const visit = (node: any) => {
-        if (!node) return;
-        if (types.has(node.type)) {
-          const start = typeof node.startIndex === 'number' ? node.startIndex : 0;
-          const end = typeof node.endIndex === 'number' ? node.endIndex : 0;
+      const visit = (node: unknown) => {
+        if (!node || typeof node !== 'object') return;
+        const n = node as {
+          type?: unknown;
+          startIndex?: unknown;
+          endIndex?: unknown;
+          childCount?: unknown;
+          child?: (i: number) => unknown;
+        };
+        if (typeof n.type === 'string' && types.has(n.type)) {
+          const start = typeof n.startIndex === 'number' ? n.startIndex : 0;
+          const end = typeof n.endIndex === 'number' ? n.endIndex : 0;
           const snippet = content.slice(start, end);
           if (snippet.trim()) chunks.push(snippet);
         }
-        const childCount = typeof node.childCount === 'number' ? node.childCount : 0;
+        const childCount = typeof n.childCount === 'number' ? n.childCount : 0;
         for (let i = 0; i < childCount; i++) {
-          visit(node.child(i));
+          visit(typeof n.child === 'function' ? n.child(i) : null);
         }
       };
 
