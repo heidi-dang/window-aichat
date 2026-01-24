@@ -27,11 +27,12 @@ Set these in your repo settings → Secrets and variables → Actions:
 
 ### Optional (PM2 + git pull deploy)
 
-If your VPS runs Node services with PM2 and your deploy flow is `git pull` + `npm run build`, set:
+If your VPS runs Node services with PM2 and your deploy flow is `git pull` + `npm run build`, you can use the same SSH secrets:
 
-- `VPS_IP`
-- `VPS_USER`
-- `VPS_SSH_KEY`
+- `SSH_HOST`
+- `SSH_USER`
+- `SSH_PRIVATE_KEY`
+- `SSH_PORT` (optional)
 
 ## How deploy works (Docker Compose)
 
@@ -47,7 +48,7 @@ On push to `main`:
 
 ## How deploy works (PM2)
 
-On push to `main` (and if `VPS_IP/VPS_USER/VPS_SSH_KEY` secrets are present):
+On push to `main` (and if `SSH_HOST/SSH_USER/SSH_PRIVATE_KEY` secrets are present):
 
 1. GitHub Actions SSHes into the VPS
 2. It writes `~/deploy.sh` on the VPS and executes it

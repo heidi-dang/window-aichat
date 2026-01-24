@@ -305,9 +305,10 @@ jobs:
       github.ref == 'refs/heads/main' &&
       (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     env:
-      VPS_IP: ${{ secrets.VPS_IP }}
-      VPS_USER: ${{ secrets.VPS_USER }}
-      VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+      SSH_HOST: ${{ secrets.SSH_HOST }}
+      SSH_USER: ${{ secrets.SSH_USER }}
+      SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+      SSH_PORT: ${{ secrets.SSH_PORT || '22' }}
 
     steps:
       - name: Gate VPS deploy on required secrets
@@ -315,7 +316,7 @@ jobs:
         shell: bash
         run: |
           missing=0
-          for name in VPS_IP VPS_USER VPS_SSH_KEY; do
+          for name in SSH_HOST SSH_USER SSH_PRIVATE_KEY; do
             if [ -z "${!name:-}" ]; then
               echo "missing ${name}"
               missing=1
@@ -331,9 +332,10 @@ jobs:
         if: steps.gate.outputs.enabled == 'true'
         uses: appleboy/ssh-action@v1.0.0
         with:
-          host: ${{ env.VPS_IP }}
-          username: ${{ env.VPS_USER }}
-          key: ${{ env.VPS_SSH_KEY }}
+          host: ${{ env.SSH_HOST }}
+          username: ${{ env.SSH_USER }}
+          key: ${{ env.SSH_PRIVATE_KEY }}
+          port: ${{ env.SSH_PORT }}
           timeout: 60s
           command_timeout: 20m
           script_stop: true
