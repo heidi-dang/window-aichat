@@ -4,6 +4,8 @@ import './App.css';
 import MonacoWrapper from './components/IDE/MonacoWrapper';
 import FileExplorer from './components/IDE/FileExplorer';
 import StatusBar from './components/IDE/StatusBar';
+import DiffViewer from './components/IDE/DiffViewer';
+import PullRequestPanel from './components/IDE/PullRequestPanel';
 
 interface Message {
   sender: string;
@@ -15,6 +17,24 @@ interface FileEntry {
   name: string;
   type: 'file' | 'directory';
   path: string;
+}
+
+interface PullRequest {
+  id: string;
+  title: string;
+  description: string;
+  sourceBranch: string;
+  targetBranch: string;
+  author: string;
+  createdAt: string;
+  status: 'open' | 'closed' | 'merged';
+  files: any[];
+  aiAnalysis?: {
+    summary: string;
+    risks: string[];
+    suggestions: string[];
+    confidence: number;
+  };
 }
 
 type ChatApiResponse = Partial<Message> & Record<string, unknown>;
@@ -72,6 +92,14 @@ function App() {
   const [showSidebar, setShowSidebar] = useState(true);
   const [showChat, setShowChat] = useState(true);
   const [activeMobilePanel, setActiveMobilePanel] = useState('editor');
+
+  // Pull Request State
+  const [showPRPanel, setShowPRPanel] = useState(false);
+  const [currentPR, setCurrentPR] = useState<PullRequest | null>(null);
+  const [showDiffViewer, setShowDiffViewer] = useState(false);
+  const [diffOriginalContent, setDiffOriginalContent] = useState('');
+  const [diffModifiedContent, setDiffModifiedContent] = useState('');
+  const [diffFileName, setDiffFileName] = useState('');
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -401,6 +429,211 @@ function App() {
     }
   };
 
+  // Pull Request Functions
+  const openPullRequest = async (prId: string) => {
+    try {
+      const res = await fetch(`${API_BASE}/api/pr/${prId}`);
+      if (res.ok) {
+        const data = await res.json();
+        setCurrentPR(data.pull_request);
+        setShowPRPanel(true);
+      } else {
+        const errorText = await readErrorText(res);
+        alert(`Failed to load pull request: ${errorText}`);
+      }
+    } catch (error: unknown) {
+      console.error("Failed to load pull request", error);
+      alert(`Failed to load pull request: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  };
+
+  const analyzePRWithAI = async (prId: string) => {
+    if (!currentPR) return;
+    
+    try {
+      const res = await fetch(`${API_BASE}/api/pr/${prId}/analyze`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          pr_id: prId,
+          gemini_key: geminiKey
+        })
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        setCurrentPR(prev => prev ? { ...prev, aiAnalysis: data.analysis } : null);
+        setMessages(prev => [...prev, {
+          sender: 'AI Analysis',
+          text: `PR Analysis completed:\n\n${data.analysis.summary}`,
+          timestamp: new Date().toLocaleTimeString()
+        }]);
+      } else {
+        const errorText = await readErrorText(res);
+        setMessages(prev => [...prev, {
+          sender: 'System',
+          text: `AI Analysis failed: ${errorText}`,
+          timestamp: new Date().toLocaleTimeString()
+        }]);
+      }
+    } catch (error: unknown) {
+      console.error("Failed to analyze PR", error);
+      setMessages(prev => [...prev, {
+        sender: 'System',
+        text: `Error analyzing PR: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        timestamp: new Date().toLocaleTimeString()
+      }]);
+    }
+  };
+
+  const approvePR = async (prId: string) => {
+    try {
+      const res = await fetch(`${API_BASE}/api/pr/${prId}/action`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          pr_id: prId,
+          action: 'approve'
+        })
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        setMessages(prev => [...prev, {
+          sender: 'System',
+          text: data.message,
+          timestamp: new Date().toLocaleTimeString()
+        }]);
+        if (currentPR) {
+          setCurrentPR({ ...currentPR, status: 'approved' as any });
+        }
+      } else {
+        const errorText = await readErrorText(res);
+        setMessages(prev => [...prev, {
+          sender: 'System',
+          text: `Failed to approve PR: ${errorText}`,
+          timestamp: new Date().toLocaleTimeString()
+        }]);
+      }
+    } catch (error: unknown) {
+      console.error("Failed to approve PR", error);
+      setMessages(prev => [...prev, {
+        sender: 'System',
+        text: `Error approving PR: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        timestamp: new Date().toLocaleTimeString()
+      }]);
+    }
+  };
+
+  const requestChanges = async (prId: string, feedback: string) => {
+    try {
+      const res = await fetch(`${API_BASE}/api/pr/${prId}/action`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          pr_id: prId,
+          action: 'request_changes',
+          feedback
+        })
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        setMessages(prev => [...prev, {
+          sender: 'System',
+          text: data.message,
+          timestamp: new Date().toLocaleTimeString()
+        }]);
+      } else {
+        const errorText = await readErrorText(res);
+        setMessages(prev => [...prev, {
+          sender: 'System',
+          text: `Failed to request changes: ${errorText}`,
+          timestamp: new Date().toLocaleTimeString()
+        }]);
+      }
+    } catch (error: unknown) {
+      console.error("Failed to request changes", error);
+      setMessages(prev => [...prev, {
+        sender: 'System',
+        text: `Error requesting changes: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        timestamp: new Date().toLocaleTimeString()
+      }]);
+    }
+  };
+
+  const mergePR = async (prId: string) => {
+    try {
+      const res = await fetch(`${API_BASE}/api/pr/${prId}/action`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          pr_id: prId,
+          action: 'merge'
+        })
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        setMessages(prev => [...prev, {
+          sender: 'System',
+          text: data.message,
+          timestamp: new Date().toLocaleTimeString()
+        }]);
+        if (currentPR) {
+          setCurrentPR({ ...currentPR, status: 'merged' as any });
+        }
+      } else {
+        const errorText = await readErrorText(res);
+        setMessages(prev => [...prev, {
+          sender: 'System',
+          text: `Failed to merge PR: ${errorText}`,
+          timestamp: new Date().toLocaleTimeString()
+        }]);
+      }
+    } catch (error: unknown) {
+      console.error("Failed to merge PR", error);
+      setMessages(prev => [...prev, {
+        sender: 'System',
+        text: `Error merging PR: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        timestamp: new Date().toLocaleTimeString()
+      }]);
+    }
+  };
+
+  const compareFiles = async (file1Path: string, file2Path: string) => {
+    try {
+      // Read both files
+      const [res1, res2] = await Promise.all([
+        fetch(`${API_BASE}/api/fs/read`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ path: file1Path })
+        }),
+        fetch(`${API_BASE}/api/fs/read`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ path: file2Path })
+        })
+      ]);
+
+      if (res1.ok && res2.ok) {
+        const data1 = await res1.json();
+        const data2 = await res2.json();
+        
+        setDiffOriginalContent(data1.content);
+        setDiffModifiedContent(data2.content);
+        setDiffFileName(`${file1Path} → ${file2Path}`);
+        setShowDiffViewer(true);
+      } else {
+        alert('Failed to read one or both files for comparison');
+      }
+    } catch (error: unknown) {
+      console.error("Failed to compare files", error);
+      alert(`Failed to compare files: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  };
+
   const getLanguage = (filename: string | null) => {
     if (!filename) return 'plaintext';
     const ext = filename.split('.').pop();
@@ -487,6 +720,12 @@ function App() {
           <div className="sidebar-section">
             <button onClick={() => setShowSettings(!showSettings)}>
               ⚙ Settings
+            </button>
+            <button onClick={() => openPullRequest('sample-pr-123')}>
+              🔄 Pull Requests
+            </button>
+            <button onClick={() => setShowDiffViewer(!showDiffViewer)}>
+              📊 Compare Files
             </button>
           </div>
 
@@ -617,6 +856,38 @@ function App() {
         </div>
         <div className="resizer-handle" onMouseDown={startResizeChat}></div>
       </div>
+
+      {/* Diff Viewer Modal */}
+      {showDiffViewer && (
+        <div className="modal-overlay">
+          <div className="modal-content diff-modal">
+            <div className="modal-header">
+              <h3>File Comparison</h3>
+              <button onClick={() => setShowDiffViewer(false)} className="close-btn">✕</button>
+            </div>
+            <div className="diff-viewer-container">
+              <DiffViewer
+                originalContent={diffOriginalContent}
+                modifiedContent={diffModifiedContent}
+                originalFileName={diffFileName}
+                modifiedFileName={diffFileName}
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Pull Request Panel */}
+      {showPRPanel && currentPR && (
+        <PullRequestPanel
+          pr={currentPR}
+          onClose={() => setShowPRPanel(false)}
+          onApprove={approvePR}
+          onRequestChanges={requestChanges}
+          onMerge={mergePR}
+          onAnalyzeWithAI={analyzePRWithAI}
+        />
+      )}
 
       {/* Bottom Navigation for Mobile */}
       <div className="bottom-nav">
