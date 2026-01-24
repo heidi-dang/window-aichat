@@ -16,6 +16,15 @@ export default defineConfig(({ mode }) => {
       wasm(),
       topLevelAwait()
     ],
+    test: {
+      exclude: [
+        '**/node_modules/**',
+        '**/dist/**',
+        '**/.{idea,git,cache,output,temp}/**',
+        '**/{coverage,playwright-report,test-results}/**',
+        'tests/e2e/**'
+      ]
+    },
     server: {
       headers: {
         'Cross-Origin-Embedder-Policy': 'require-corp',
