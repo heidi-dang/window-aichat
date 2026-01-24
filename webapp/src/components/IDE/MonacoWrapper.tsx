@@ -1,5 +1,5 @@
 import Editor from '@monaco-editor/react'; // Removed OnMount
-import * as MonacoEditor from 'monaco-editor';
+import type * as MonacoEditor from 'monaco-editor';
 
 interface MonacoWrapperProps {
   fileContent: string;

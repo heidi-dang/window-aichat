@@ -1,5 +1,6 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
-import * as MonacoEditor from 'monaco-editor';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import type * as MonacoEditor from 'monaco-editor';
+import { AnimatePresence, motion } from 'framer-motion';
 import './App.css';
 import MonacoWrapper from './components/IDE/MonacoWrapper';
 import FileExplorer from './components/IDE/FileExplorer';
@@ -19,7 +20,6 @@ interface FileEntry {
   type: 'file' | 'directory';
   path: string;
 }
-
 function asString(value: unknown, fallback = ''): string {
   return typeof value === 'string' ? value : fallback;
 }
@@ -121,6 +121,7 @@ function App() {
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const sendAbortRef = useRef<AbortController | null>(null);
 
   // Settings State
   const [geminiKey, setGeminiKey] = useState(localStorage.getItem('gemini_key') || '');
@@ -139,8 +140,6 @@ function App() {
   const [editorColumn, setEditorColumn] = useState(1);
 
   // Panel Visibility State
-  const [showSidebar, setShowSidebar] = useState(true);
-  const [showChat, setShowChat] = useState(true);
   const [activeMobilePanel, setActiveMobilePanel] = useState('editor');
 
   // Pull Request State
@@ -159,12 +158,55 @@ function App() {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
 
+  const renderedMessages = useMemo(() => (
+    <AnimatePresence initial={false}>
+      {messages.map((msg, index) => {
+        const isUser = msg.sender === 'You';
+        const isSystem = msg.sender === 'System';
+        const isTool = msg.sender === 'AI Tool' || msg.sender === 'AI Analysis';
+        const messageClass = isUser
+          ? 'message user'
+          : isSystem
+            ? 'message ai message-system'
+            : isTool
+              ? 'message ai message-tool'
+              : 'message ai';
+
+        return (
+        <motion.div
+          key={`${msg.timestamp}-${index}`}
+          className={messageClass}
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -8 }}
+          transition={{ duration: 0.2, ease: 'easeOut' }}
+          layout
+        >
+          <div className="message-header">
+            <span className="sender">{msg.sender}</span>
+            <span className="time">{msg.timestamp}</span>
+          </div>
+          <div className="message-content">
+            {msg.text}
+          </div>
+        </motion.div>
+      );
+      })}
+    </AnimatePresence>
+  ), [messages]);
+
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
 
   useEffect(() => {
     void fetchFiles();
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      sendAbortRef.current?.abort();
+    };
   }, []);
 
   const fetchFiles = async () => {
@@ -200,9 +242,18 @@ function App() {
         setFileContent(data.content);
         setActiveFile(path);
         setActiveMobilePanel('editor'); // Switch to editor on file open
+        setMessages(prev => [...prev, {
+          sender: 'System',
+          text: `Opened ${path} successfully.`,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        }]);
       } else {
         const errorText = await readErrorText(res);
-        alert(`Failed to read file: ${errorText}`);
+        setMessages(prev => [...prev, {
+          sender: 'System',
+          text: `Failed to read file: ${errorText}`,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        }]);
       }
     } catch (error: unknown) {
       console.error("Failed to read file", error);
@@ -210,7 +261,11 @@ function App() {
       if (error instanceof Error) {
         errorMessage = error.message;
       }
-      alert(`Failed to read file: ${errorMessage}`);
+      setMessages(prev => [...prev, {
+        sender: 'System',
+        text: `Failed to read file: ${errorMessage}`,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      }]);
     }
   };
 
@@ -225,10 +280,18 @@ function App() {
         body: JSON.stringify({ path: activeFile, content })
       });
       if (res.ok) {
-        console.log('File saved');
+        setMessages(prev => [...prev, {
+          sender: 'System',
+          text: `Saved ${activeFile} successfully.`,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        }]);
       } else {
         const errorText = await readErrorText(res);
-        alert(`Failed to save file: ${errorText}`);
+        setMessages(prev => [...prev, {
+          sender: 'System',
+          text: `Failed to save file: ${errorText}`,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        }]);
       }
     } catch (error: unknown) {
       console.error("Failed to save file", error);
@@ -236,7 +299,11 @@ function App() {
       if (error instanceof Error) {
         errorMessage = error.message;
       }
-      alert(`Failed to save file: ${errorMessage}`);
+      setMessages(prev => [...prev, {
+        sender: 'System',
+        text: `Failed to save file: ${errorMessage}`,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      }]);
     }
   };
 
@@ -249,7 +316,11 @@ function App() {
     const code = selection || editorRef.current.getValue();
     
     if (!code.trim()) {
-      alert("Please select code or open a file first.");
+      setMessages(prev => [...prev, {
+        sender: 'System',
+        text: 'Please select code or open a file first.',
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      }]);
       return;
     }
 
@@ -285,6 +356,11 @@ function App() {
       setMessages(prev => [...prev, {
         sender: 'AI Tool',
         text: typeof data?.result === 'string' ? data.result : JSON.stringify(data),
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      }]);
+      setMessages(prev => [...prev, {
+        sender: 'System',
+        text: `${tool} completed successfully.`,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
       }]);
     } catch (error: unknown) {
@@ -323,10 +399,19 @@ function App() {
     localStorage.setItem('github_token', githubToken);
     localStorage.setItem('repo_url', repoUrl);
     setShowSettings(false);
+    setMessages(prev => [...prev, {
+      sender: 'System',
+      text: 'Settings saved successfully.',
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    }]);
   };
 
   const sendMessage = async () => {
-    if (!input.trim()) { return; }
+    if (!input.trim() || isLoading) { return; }
+
+    sendAbortRef.current?.abort();
+    const abortController = new AbortController();
+    sendAbortRef.current = abortController;
 
     const userMsg: Message = {
       sender: 'You',
@@ -342,6 +427,7 @@ function App() {
       const res = await fetch(`${API_BASE}/api/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        signal: abortController.signal,
         body: JSON.stringify({
           message: userMsg.text,
           model: selectedModel,
@@ -364,7 +450,20 @@ function App() {
 
       const data = await res.json();
       setMessages(prev => [...prev, toMessage(data, selectedModel === 'deepseek' ? 'DeepSeek' : 'Gemini')]);
+      setMessages(prev => [...prev, {
+        sender: 'System',
+        text: 'Response delivered successfully.',
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      }]);
     } catch (error: unknown) {
+      if (abortController.signal.aborted) {
+        setMessages(prev => [...prev, {
+          sender: 'System',
+          text: 'Request cancelled.',
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        }]);
+        return;
+      }
       console.error("Failed to send message", error);
       let errorMessage = "An unknown error occurred.";
       if (error instanceof Error) {
@@ -384,7 +483,11 @@ function App() {
 
   const cloneRepo = async () => {
     if (!repoUrl) {
-      alert("Please enter a GitHub repository URL.");
+      setMessages(prev => [...prev, {
+        sender: 'System',
+        text: 'Please enter a GitHub repository URL before cloning.',
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      }]);
       return;
     }
     setIsLoading(true);
@@ -407,6 +510,11 @@ function App() {
           sender: 'System',
           text: `Clone successful: ${data.message}`,
           timestamp: new Date().toLocaleTimeString()
+        }]);
+        setMessages(prev => [...prev, {
+          sender: 'System',
+          text: 'Repository ready. Files refreshed successfully.',
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
         }]);
         void fetchFiles(); // Refresh file explorer
       } else {
@@ -459,6 +567,11 @@ function App() {
           text: `Upload successful: ${data.message}`,
           timestamp: new Date().toLocaleTimeString()
         }]);
+        setMessages(prev => [...prev, {
+          sender: 'System',
+          text: 'Upload complete. File explorer refreshed.',
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        }]);
         void fetchFiles(); // Refresh file explorer
       } else {
         setMessages(prev => [...prev, {
@@ -491,18 +604,35 @@ function App() {
         const data = await res.json();
         const pr = toPullRequest((data as Record<string, unknown>).pull_request);
         if (!pr) {
-          alert('Failed to load pull request: invalid response payload');
+          setMessages(prev => [...prev, {
+            sender: 'System',
+            text: 'Failed to load pull request: invalid response payload.',
+            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+          }]);
           return;
         }
         setCurrentPR(pr);
         setShowPRPanel(true);
+        setMessages(prev => [...prev, {
+          sender: 'System',
+          text: 'Pull request loaded successfully.',
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        }]);
       } else {
         const errorText = await readErrorText(res);
-        alert(`Failed to load pull request: ${errorText}`);
+        setMessages(prev => [...prev, {
+          sender: 'System',
+          text: `Failed to load pull request: ${errorText}`,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        }]);
       }
     } catch (error: unknown) {
       console.error("Failed to load pull request", error);
-      alert(`Failed to load pull request: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      setMessages(prev => [...prev, {
+        sender: 'System',
+        text: `Failed to load pull request: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      }]);
     }
   };
 
@@ -566,6 +696,11 @@ function App() {
         if (currentPR) {
           setCurrentPR({ ...currentPR, status: 'approved' });
         }
+        setMessages(prev => [...prev, {
+          sender: 'System',
+          text: 'Pull request approved successfully.',
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        }]);
       } else {
         const errorText = await readErrorText(res);
         setMessages(prev => [...prev, {
@@ -602,6 +737,11 @@ function App() {
           sender: 'System',
           text: data.message,
           timestamp: new Date().toLocaleTimeString()
+        }]);
+        setMessages(prev => [...prev, {
+          sender: 'System',
+          text: 'Review feedback submitted successfully.',
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
         }]);
       } else {
         const errorText = await readErrorText(res);
@@ -642,6 +782,11 @@ function App() {
         if (currentPR) {
           setCurrentPR({ ...currentPR, status: 'merged' });
         }
+        setMessages(prev => [...prev, {
+          sender: 'System',
+          text: 'Pull request merged successfully.',
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        }]);
       } else {
         const errorText = await readErrorText(res);
         setMessages(prev => [...prev, {
@@ -722,105 +867,91 @@ function App() {
       window.removeEventListener('mouseup', stopResize);
     };
   }, [resizePanel, stopResize]);
-
-
   return (
     <div className="app-container">
-      {/* Panel Toggle Buttons */}
-      <div className="panel-toggles">
-        <button onClick={() => setShowSidebar(!showSidebar)} className="toggle-btn">
-          {showSidebar ? '◀ Hide Sidebar' : '▶ Show Sidebar'}
-        </button>
-        <button onClick={() => setShowChat(!showChat)} className="toggle-btn">
-          {showChat ? 'Hide Chat ▶' : '◀ Show Chat'}
-        </button>
-      </div>
-
       {/* Sidebar */}
-      {showSidebar && (
-        <div className={`sidebar ${activeMobilePanel === 'sidebar' ? 'visible' : ''}`} style={{ width: sidebarWidth }} ref={sidebarRef}>
-          <div className="sidebar-header">
-            <h2>AI IDE</h2>
-          </div>
-          
-          <div className="sidebar-section">
-            <button onClick={() => setShowSettings(!showSettings)}>
-              ⚙ Settings
-            </button>
-            <button onClick={() => openPullRequest('sample-pr-123')}>
-              🔄 Pull Requests
-            </button>
-            <button onClick={() => setShowDiffViewer(!showDiffViewer)}>
-              📊 Compare Files
-            </button>
-            <button onClick={() => setShowEvolveAI(!showEvolveAI)}>
-              🧬 EvolveAI
-            </button>
-            <button onClick={() => setShowLivingDocs(!showLivingDocs)}>
-              📚 Living Docs
-            </button>
-          </div>
-
-          {showSettings && (
-            <div className="settings-panel">
-              <h3>Configuration</h3>
-              <input 
-                type="password" 
-                placeholder="Gemini API Key"
-                value={geminiKey}
-                onChange={(e) => setGeminiKey(e.target.value)}
-              />
-              <input 
-                type="password" 
-                placeholder="DeepSeek API Key"
-                value={deepseekKey}
-                onChange={(e) => setDeepseekKey(e.target.value)}
-              />
-              <input 
-                type="password" 
-                placeholder="GitHub Token"
-                value={githubToken}
-                onChange={(e) => setGithubToken(e.target.value)}
-              />
-              <input 
-                type="text" 
-                placeholder="GitHub Repo URL"
-                value={repoUrl}
-                onChange={(e) => setRepoUrl(e.target.value)}
-              />
-              <button className="save-btn" onClick={saveSettings}>Save</button>
-            </div>
-          )}
-
-          <div className="sidebar-section">
-            <button onClick={() => void cloneRepo()} disabled={isLoading || !repoUrl}>
-              {isLoading ? 'Cloning...' : 'Clone GitHub Repo'}
-            </button>
-            <input 
-              type="file" 
-              id="upload-zip" 
-              style={{ display: 'none' }} 
-              onChange={(e) => void uploadFile(e)} 
-              disabled={isLoading}
-            />
-            <button onClick={() => document.getElementById('upload-zip')?.click()} disabled={isLoading}>
-              Upload Zip/File
-            </button>
-          </div>
-
-          <FileExplorer
-            files={files}
-            activeFile={activeFile}
-            onFileClick={openFile}
-            onRefresh={() => void fetchFiles()}
-            onCloneRepo={() => void cloneRepo()}
-            onUploadFile={(e) => void uploadFile(e)}
-            isLoading={isLoading}
-            repoUrl={repoUrl}
-          />
-          <div className="resizer-handle" onMouseDown={startResizeSidebar}></div>
+      <div className={`sidebar-area ${activeMobilePanel === 'sidebar' ? 'visible' : ''}`} style={{ width: sidebarWidth }} ref={sidebarRef}>
+        <div className="sidebar-header">
+          <h2>Window-AIChat</h2>
         </div>
-      )}
+
+        <div className="sidebar-section">
+          <button onClick={() => setShowSettings(!showSettings)}>
+            ⚙ Settings
+          </button>
+          <button onClick={() => openPullRequest('sample-pr-123')}>
+            🔄 Pull Requests
+          </button>
+          <button onClick={() => setShowDiffViewer(!showDiffViewer)}>
+            📊 Compare Files
+          </button>
+          <button onClick={() => setShowEvolveAI(!showEvolveAI)}>
+            🧬 EvolveAI
+          </button>
+          <button onClick={() => setShowLivingDocs(!showLivingDocs)}>
+            📚 Living Docs
+          </button>
+        </div>
+
+        {showSettings && (
+          <div className="settings-panel">
+            <h3>Configuration</h3>
+            <input
+              type="password"
+              placeholder="Gemini API Key"
+              value={geminiKey}
+              onChange={(e) => setGeminiKey(e.target.value)}
+            />
+            <input
+              type="password"
+              placeholder="DeepSeek API Key"
+              value={deepseekKey}
+              onChange={(e) => setDeepseekKey(e.target.value)}
+            />
+            <input
+              type="password"
+              placeholder="GitHub Token"
+              value={githubToken}
+              onChange={(e) => setGithubToken(e.target.value)}
+            />
+            <input
+              type="text"
+              placeholder="GitHub Repo URL"
+              value={repoUrl}
+              onChange={(e) => setRepoUrl(e.target.value)}
+            />
+            <button className="save-btn" onClick={saveSettings}>Save</button>
+          </div>
+        )}
+
+        <div className="sidebar-section">
+          <button onClick={() => void cloneRepo()} disabled={isLoading || !repoUrl}>
+            {isLoading ? 'Cloning...' : 'Clone GitHub Repo'}
+          </button>
+          <input
+            type="file"
+            id="upload-zip"
+            style={{ display: 'none' }}
+            onChange={(e) => void uploadFile(e)}
+            disabled={isLoading}
+          />
+          <button onClick={() => document.getElementById('upload-zip')?.click()} disabled={isLoading}>
+            Upload Zip/File
+          </button>
+        </div>
+
+        <FileExplorer
+          files={files}
+          activeFile={activeFile}
+          onFileClick={openFile}
+          onRefresh={() => void fetchFiles()}
+          onCloneRepo={() => void cloneRepo()}
+          onUploadFile={(e) => void uploadFile(e)}
+          isLoading={isLoading}
+          repoUrl={repoUrl}
+        />
+        <div className="resizer-handle" onMouseDown={startResizeSidebar}></div>
+      </div>
 
       {/* Editor Area */}
       <div className={`editor-area ${activeMobilePanel === 'editor' ? 'visible' : ''}`}>
@@ -855,18 +986,17 @@ function App() {
           </select>
         </div>
         <div className="messages-list">
-          {messages.map((msg, index) => (
-            <div key={index} className={`message ${msg.sender === 'You' ? 'user' : 'ai'}`}>
-              <div className="message-header">
-                <span className="sender">{msg.sender}</span>
-                <span className="time">{msg.timestamp}</span>
-              </div>
-              <div className="message-content">
-                {msg.text}
-              </div>
-            </div>
-          ))}
-          {isLoading && <div className="message ai"><div className="message-content">Thinking...</div></div>}
+          {renderedMessages}
+          {isLoading && (
+            <motion.div
+              className="message ai message-loading"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ duration: 0.2 }}
+            >
+              <div className="message-content">Thinking...</div>
+            </motion.div>
+          )}
           <div ref={messagesEndRef} />
         </div>
 

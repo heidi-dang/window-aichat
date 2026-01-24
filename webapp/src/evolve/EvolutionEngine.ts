@@ -1,3 +1,4 @@
+import VectorStoreService from '../utils/VectorStoreService';
 export interface CodePattern {
   id: string;
   type: 'function' | 'class' | 'component' | 'hook' | 'api' | 'config';
@@ -35,10 +36,13 @@ export interface PredictiveInsight {
 
 export class EvolutionEngine {
   private static instance: EvolutionEngine;
+  private vectorStore = VectorStoreService.getInstance();
   private patterns: Map<string, CodePattern> = new Map();
   private insights: PredictiveInsight[] = [];
 
-  private constructor() {}
+  private constructor() {
+    void this.vectorStore.init?.();
+  }
 
   static getInstance(): EvolutionEngine {
     if (!EvolutionEngine.instance) {
@@ -425,6 +429,10 @@ export class EvolutionEngine {
   private async getAllCodeFiles(apiBase: string): Promise<string[]> {
     try {
       const response = await fetch(`${apiBase}/api/fs/list`);
+      if (!response.ok) {
+        console.warn('[EvolveAI] Failed to list files:', response.status, response.statusText);
+        return [];
+      }
       const files = (await response.json()) as unknown;
       const list = Array.isArray(files) ? files : [];
 

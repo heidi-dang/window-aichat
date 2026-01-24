@@ -28,6 +28,7 @@ export const LivingDocumentation: React.FC<LivingDocumentationProps> = ({ apiBas
 
   const analyzeCodebase = useCallback(async () => {
     setIsAnalyzing(true);
+    void apiBase;
     try {
       const source = apiBase ? apiBase.replace(/\/$/, '') : 'local';
       // This would integrate with the EvolutionEngine to analyze code
