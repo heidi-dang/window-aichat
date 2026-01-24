@@ -36,8 +36,8 @@ function toChatRole(sender: string): string {
 }
 
 function getWsUrl(path: string): string {
-  const base = API_BASE || window.location.origin;
-  const url = new URL(base);
+  const base = API_BASE?.trim() || window.location.origin;
+  const url = base.startsWith('/') ? new URL(base, window.location.origin) : new URL(base);
   url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
   url.pathname = path;
   url.search = '';

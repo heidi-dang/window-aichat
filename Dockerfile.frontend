@@ -15,9 +15,8 @@ COPY webapp/ ./
 
 # Build with increased memory
 ENV NODE_OPTIONS=--max-old-space-size=4096
-# Pass VITE_BACKEND_URL to the build process
-ARG VITE_BACKEND_URL
-ENV VITE_BACKEND_URL=${VITE_BACKEND_URL}
+ARG VITE_API_BASE
+ENV VITE_API_BASE=${VITE_API_BASE}
 RUN npm run build
 
 # Production stage - Nginx

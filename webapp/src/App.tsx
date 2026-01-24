@@ -27,8 +27,8 @@ interface PullRequest {
   targetBranch: string;
   author: string;
   createdAt: string;
-  status: 'open' | 'closed' | 'merged';
-  files: any[];
+  status: 'open' | 'closed' | 'merged' | 'approved';
+  files: unknown[];
   aiAnalysis?: {
     summary: string;
     risks: string[];
@@ -505,7 +505,7 @@ function App() {
           timestamp: new Date().toLocaleTimeString()
         }]);
         if (currentPR) {
-          setCurrentPR({ ...currentPR, status: 'approved' as any });
+          setCurrentPR({ ...currentPR, status: 'approved' });
         }
       } else {
         const errorText = await readErrorText(res);
@@ -581,7 +581,7 @@ function App() {
           timestamp: new Date().toLocaleTimeString()
         }]);
         if (currentPR) {
-          setCurrentPR({ ...currentPR, status: 'merged' as any });
+          setCurrentPR({ ...currentPR, status: 'merged' });
         }
       } else {
         const errorText = await readErrorText(res);
