@@ -23,6 +23,7 @@ jobs:
   backend:
     name: Build Backend
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: read
       packages: write
@@ -110,6 +111,7 @@ jobs:
   frontend:
     name: Build Frontend
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: read
       packages: write
@@ -194,7 +196,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     needs: [backend, frontend]
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    if: >
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+      secrets.SSH_HOST != '' &&
+      secrets.SSH_USER != '' &&
+      secrets.SSH_PRIVATE_KEY != '' &&
+      secrets.GHCR_USER != '' &&
+      secrets.GHCR_PAT != ''
     environment:
       name: production
       url: https://your-domain.duckdns.org
@@ -202,6 +211,25 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Ensure remote deploy directories
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            set -euo pipefail
+            mkdir -p /opt/window-aichat/.github/scripts
+
+      - name: Upload deployment files
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          source: "docker-compose.prod.yml,nginx.conf,.github/scripts/healthcheck.sh"
+          target: /opt/window-aichat
 
       - name: Deploy with Docker Compose
         uses: appleboy/ssh-action@v1.0.0
@@ -212,7 +240,6 @@ jobs:
           script: |
             set -euo pipefail
             cd /opt/window-aichat
-            git pull origin main
 
             export GHCR_REPO='${{ github.repository }}'
             export IMAGE_TAG='latest'
