@@ -6,6 +6,7 @@ import asyncio
 import shutil
 import time
 import zipfile
+import secrets
 from typing import Any, Dict, List, Optional
 from datetime import datetime, timedelta
 
@@ -336,6 +337,26 @@ def create_access_token(data: dict):
     return encoded_jwt
 
 
+def _sign_oauth_state(state: str) -> str:
+    signature = hmac.new(SECRET_KEY.encode(), state.encode(), hashlib.sha256).digest()
+    return base64.urlsafe_b64encode(signature).decode().rstrip("=")
+
+
+def _build_oauth_state() -> str:
+    raw = secrets.token_urlsafe(32)
+    signature = _sign_oauth_state(raw)
+    return f"{raw}.{signature}"
+
+
+def _verify_oauth_state(state: str) -> bool:
+    try:
+        raw, signature = state.rsplit(".", 1)
+        expected = _sign_oauth_state(raw)
+        return hmac.compare_digest(signature, expected)
+    except Exception:
+        return False
+
+
 def get_user_from_token(token: str, db: Session):
     """
     Decodes a JWT token and returns the corresponding user from the database.
@@ -391,12 +412,14 @@ async def login(provider: str):
         "OAUTH_REDIRECT_URI", f"http://localhost:8000/auth/callback/{provider}"
     )
 
+    state = _build_oauth_state()
     params = {
         "client_id": config["client_id"],
         "response_type": "code",
         "scope": config["scope"],
         "redirect_uri": redirect_uri,
         "access_type": "offline",
+        "state": state,
     }
 
     # Construct URL
@@ -407,9 +430,12 @@ async def login(provider: str):
 
 
 @app.get("/auth/callback/{provider}")
-async def auth_callback(provider: str, code: str, db: Session = Depends(get_db)):
+async def auth_callback(provider: str, code: str, state: str, db: Session = Depends(get_db)):
     if provider not in OAUTH_CONFIG:
         raise HTTPException(status_code=400, detail="Invalid provider")
+
+    if not _verify_oauth_state(state):
+        raise HTTPException(status_code=400, detail="Invalid OAuth state")
 
     config = OAUTH_CONFIG[provider]
 

@@ -116,6 +116,45 @@ body {
   color: #9fb0c3;
 }
 
+.auth-health,
+.auth-oauth-status {
+  font-size: 0.7rem;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  text-transform: uppercase;
+}
+
+.auth-health.ok {
+  color: #9dffc5;
+  border-color: rgba(120, 255, 180, 0.4);
+  background: rgba(120, 255, 180, 0.12);
+}
+
+.auth-health.error {
+  color: #ffb0b0;
+  border-color: rgba(255, 96, 96, 0.4);
+  background: rgba(255, 96, 96, 0.12);
+}
+
+.auth-health.unknown {
+  color: #c9dcff;
+  border-color: rgba(120, 168, 255, 0.4);
+  background: rgba(120, 168, 255, 0.12);
+}
+
+.auth-oauth-status.ready {
+  color: #c9dcff;
+  border-color: rgba(120, 168, 255, 0.4);
+  background: rgba(120, 168, 255, 0.12);
+}
+
+.auth-oauth-status.missing {
+  color: #ffd2b0;
+  border-color: rgba(255, 125, 64, 0.4);
+  background: rgba(255, 125, 64, 0.12);
+}
+
 .auth-toast {
   position: fixed;
   top: 16px;
@@ -1279,6 +1318,34 @@ body {
   color: #d7e4f7;
   white-space: pre-wrap;
   word-break: break-all;
+}
+
+.token-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.token-actions button {
+  border: 1px solid rgba(120, 168, 255, 0.4);
+  background: rgba(120, 168, 255, 0.12);
+  color: #c9dcff;
+  border-radius: 6px;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+
+.token-actions button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.auth-persist {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.75rem;
+  color: #9fb0c3;
 }
 
 .auth-lock {

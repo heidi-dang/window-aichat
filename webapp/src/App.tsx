@@ -19,6 +19,7 @@ import DiffViewer from './components/IDE/DiffViewer';
 import { EvolveAI, LivingDocumentation } from './evolve';
 import PullRequestPanel, { type PullRequest, type PullRequestFile } from './components/IDE/PullRequestPanel';
 import { AgentLoop } from './agent/AgentLoop';
+import { readJsonResponse } from './utils/apiResponse';
 
 interface Message {
   sender: string;
@@ -135,6 +136,10 @@ const GOOGLE_CONFIGURED = Boolean(
 const GITHUB_CONFIGURED = Boolean(
   (import.meta as { env: Record<string, string | undefined> }).env?.VITE_GITHUB_CLIENT_ID
 );
+const AUDIT_STORAGE_KEY = 'window-aichat:auth-audit';
+const AUDIT_PERSIST_KEY = 'window-aichat:auth-audit-persist';
+const REFRESH_COOLDOWN_MS = 60_000;
+const EXPIRY_WARNING_SECONDS = 300;
 
 async function readErrorText(res: Response): Promise<string> {
   try {
@@ -185,11 +190,18 @@ function App() {
   const [manualToken, setManualToken] = useState('');
   const [authToast, setAuthToast] = useState<string | null>(null);
   const [authTelemetry, setAuthTelemetry] = useState<{ count: number; lastAt?: string }>(() => ({ count: 0 }));
-  const [authAuditLog, setAuthAuditLog] = useState<Array<{ time: string; context: string }>>([]);
+  const [authAuditLog, setAuthAuditLog] = useState<Array<{ time: string; context: string }>>(() => {
+    const raw = localStorage.getItem(AUDIT_STORAGE_KEY);
+    return raw ? (JSON.parse(raw) as Array<{ time: string; context: string }>) : [];
+  });
+  const [persistAuthAudit, setPersistAuthAudit] = useState(() => localStorage.getItem(AUDIT_PERSIST_KEY) === 'true');
   const [authCountdown, setAuthCountdown] = useState(() => formatCountdown(decodeJwt(getToken())?.exp as number | null));
   const [showAuthDashboard, setShowAuthDashboard] = useState(false);
   const [showTokenPlain, setShowTokenPlain] = useState(false);
   const [rateLimitWarnings, setRateLimitWarnings] = useState<Array<{ time: string; message: string }>>([]);
+  const [authHealthStatus, setAuthHealthStatus] = useState<'ok' | 'error' | 'unknown'>('unknown');
+  const [refreshCooldownUntil, setRefreshCooldownUntil] = useState<number | null>(null);
+  const expiryWarningRef = useRef<number | null>(null);
 
   // File System & Editor State
   const [files, setFiles] = useState<FileEntry[]>([]);
@@ -282,6 +294,13 @@ function App() {
     const errorText = await readErrorText(res);
     if (res.status === 429) {
       const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      const resetHeader = res.headers.get('X-RateLimit-Reset');
+      const resetSeconds = resetHeader ? Number(resetHeader) : null;
+      if (resetSeconds && !Number.isNaN(resetSeconds)) {
+        setRefreshCooldownUntil(Date.now() + resetSeconds * 1000);
+      } else {
+        setRefreshCooldownUntil(Date.now() + REFRESH_COOLDOWN_MS);
+      }
       setRateLimitWarnings(prev => [{ time: timestamp, message: errorText }, ...prev].slice(0, 10));
       setMessages(prev => [...prev, {
         sender: 'System',
@@ -314,7 +333,7 @@ function App() {
         setAuthError(errorText);
         return;
       }
-      const data = (await res.json()) as { token?: string };
+      const data = await readJsonResponse<{ token?: string }>(res);
       if (data.token) {
         setToken(data.token);
         setCredentials(authUsername.trim(), authPassword, authStorageMode);
@@ -342,6 +361,11 @@ function App() {
 
   const refreshToken = async () => {
     setAuthError(null);
+    if (refreshCooldownUntil && Date.now() < refreshCooldownUntil) {
+      setAuthToast('Refresh cooldown active. Please wait a moment.');
+      setTimeout(() => setAuthToast(null), 2500);
+      return;
+    }
     const creds = getCredentials();
     if (!creds) {
       setAuthError('No stored credentials. Please login again.');
@@ -356,16 +380,31 @@ function App() {
       if (!res.ok) {
         const errorText = await readErrorText(res);
         setAuthError(errorText);
+        setRefreshCooldownUntil(Date.now() + REFRESH_COOLDOWN_MS);
         return;
       }
       const data = (await res.json()) as { token?: string };
       if (data.token) {
         setToken(data.token);
+        setRefreshCooldownUntil(null);
       } else {
         setAuthError('No token returned by server.');
+        setRefreshCooldownUntil(Date.now() + REFRESH_COOLDOWN_MS);
       }
     } catch (error) {
       setAuthError(error instanceof Error ? error.message : 'Failed to refresh token.');
+      setRefreshCooldownUntil(Date.now() + REFRESH_COOLDOWN_MS);
+    }
+  };
+
+  const copyText = async (text: string, successMessage: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setAuthToast(successMessage);
+    } catch {
+      setAuthToast('Failed to copy to clipboard.');
+    } finally {
+      setTimeout(() => setAuthToast(null), 2500);
     }
   };
 
@@ -375,14 +414,19 @@ function App() {
       setTimeout(() => setAuthToast(null), 2500);
       return;
     }
-    try {
-      await navigator.clipboard.writeText(authToken);
-      setAuthToast('Token copied to clipboard.');
+    await copyText(authToken, 'Token copied to clipboard.');
+  };
+
+  const copyMaskedToken = async () => {
+    if (!authToken) {
+      setAuthToast('No token to copy.');
       setTimeout(() => setAuthToast(null), 2500);
-    } catch {
-      setAuthToast('Failed to copy token.');
-      setTimeout(() => setAuthToast(null), 2500);
+      return;
     }
+    const masked = authToken.length > 12
+      ? `${authToken.slice(0, 6)}...${authToken.slice(-4)}`
+      : authToken.replace(/.(?=.{2})/g, '*');
+    await copyText(masked, 'Masked token copied.');
   };
 
   const toggleStorageMode = () => {
@@ -403,15 +447,28 @@ function App() {
         setAuthError(errorText);
         return;
       }
-      const data = (await res.json()) as { url?: string };
-      if (data.url) {
+      const data = await readJsonResponse<{ url?: string; error?: string }>(res);
+      if (data.error) {
+        setAuthError(data.error);
+        return;
+      }
+      if (data.url && /^https?:\/\//.test(data.url)) {
         window.location.href = data.url;
       } else {
-        setAuthError('OAuth URL not returned by server.');
+        setAuthError('OAuth URL missing or invalid.');
       }
     } catch (error) {
       setAuthError(error instanceof Error ? error.message : 'Failed to start OAuth flow.');
     }
+  };
+
+  const logoutEverywhere = () => {
+    clearToken();
+    setAuthAuditLog([]);
+    setRateLimitWarnings([]);
+    localStorage.removeItem(AUDIT_STORAGE_KEY);
+    setAuthToast('Signed out from all sessions.');
+    setTimeout(() => setAuthToast(null), 2500);
   };
 
   const scrollToBottom = () => {
@@ -477,10 +534,49 @@ function App() {
   }, [authExpiry]);
 
   useEffect(() => {
-    if (authExpiry && authExpiry * 1000 <= Date.now()) {
-      void refreshToken();
+    if (authExpiry) {
+      const timeLeft = authExpiry * 1000 - Date.now();
+      if (timeLeft <= 0) {
+        if (!refreshCooldownUntil || Date.now() >= refreshCooldownUntil) {
+          void refreshToken();
+        }
+      } else if (timeLeft <= EXPIRY_WARNING_SECONDS * 1000 && expiryWarningRef.current !== authExpiry) {
+        expiryWarningRef.current = authExpiry;
+        setAuthToast('Token expiring soon. Refresh or re-authenticate.');
+        setTimeout(() => setAuthToast(null), 3500);
+      }
     }
-  }, [authExpiry]);
+  }, [authExpiry, refreshCooldownUntil]);
+
+  useEffect(() => {
+    const loadHealth = async () => {
+      try {
+        const healthRes = await fetch(`${API_BASE}/health`);
+        if (healthRes.ok) {
+          setAuthHealthStatus('ok');
+          return;
+        }
+        const rootRes = await fetch(`${API_BASE}/`);
+        setAuthHealthStatus(rootRes.ok ? 'ok' : 'error');
+      } catch {
+        setAuthHealthStatus('error');
+      }
+    };
+    void loadHealth();
+  }, []);
+
+  useEffect(() => {
+    if (persistAuthAudit) {
+      localStorage.setItem(AUDIT_STORAGE_KEY, JSON.stringify(authAuditLog));
+    }
+  }, [authAuditLog, persistAuthAudit]);
+
+  useEffect(() => {
+    localStorage.setItem(AUDIT_PERSIST_KEY, String(persistAuthAudit));
+    if (!persistAuthAudit) {
+      localStorage.removeItem(AUDIT_STORAGE_KEY);
+    }
+  }, [persistAuthAudit]);
 
   useEffect(() => {
     void fetchFiles();
@@ -501,17 +597,7 @@ function App() {
       });
       if (await handleAuthFailure(res, 'listing files')) return;
       if (res.ok) {
-        const contentType = res.headers.get('content-type') || '';
-        if (!contentType.includes('application/json')) {
-          const errorText = await readErrorText(res);
-          setMessages(prev => [...prev, {
-            sender: 'System',
-            text: `Unexpected response format: ${errorText}`,
-            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-          }]);
-          return;
-        }
-        const data = await res.json();
+        const data = await readJsonResponse<FileEntry[]>(res);
         setFiles(data);
       }
     } catch (error: unknown) {
@@ -546,17 +632,7 @@ function App() {
       });
       if (await handleAuthFailure(res, 'reading files')) return;
       if (res.ok) {
-        const contentType = res.headers.get('content-type') || '';
-        if (!contentType.includes('application/json')) {
-          const errorText = await readErrorText(res);
-          setMessages(prev => [...prev, {
-            sender: 'System',
-            text: `Unexpected response format: ${errorText}`,
-            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-          }]);
-          return;
-        }
-        const data = await res.json();
+        const data = await readJsonResponse<{ content: string }>(res);
         setFileContent(data.content);
         setActiveFile(path);
         setActiveMobilePanel('editor'); // Switch to editor on file open
@@ -676,17 +752,7 @@ function App() {
         return;
       }
 
-      const contentType = res.headers.get('content-type') || '';
-      if (!contentType.includes('application/json')) {
-        const errorText = await readErrorText(res);
-        setMessages(prev => [...prev, {
-          sender: 'System',
-          text: `Unexpected response format: ${errorText}`,
-          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-        }]);
-        return;
-      }
-      const data = await res.json();
+      const data = await readJsonResponse<{ result?: string }>(res);
       setMessages(prev => [...prev, {
         sender: 'AI Tool',
         text: typeof data?.result === 'string' ? data.result : JSON.stringify(data),
@@ -743,6 +809,14 @@ function App() {
   const startAutonomousMode = async () => {
     if (!autonomousTask.trim() || isAutonomousRunning) return;
     if (!ensureAuth('run autonomous tasks')) return;
+    if (refreshCooldownUntil && Date.now() < refreshCooldownUntil) {
+      setMessages(prev => [...prev, {
+        sender: 'System',
+        text: 'Rate limit cooldown active. Try again shortly.',
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      }]);
+      return;
+    }
 
     const abortController = new AbortController();
     autonomousAbortRef.current?.abort();
@@ -1333,6 +1407,10 @@ function App() {
       <div className={`sidebar-area ${activeMobilePanel === 'sidebar' ? 'visible' : ''}`} style={{ width: sidebarWidth }} ref={sidebarRef}>
         <div className="sidebar-header">
           <h2>Window-AIChat</h2>
+          <span className={`auth-health ${authHealthStatus}`}>{authHealthStatus === 'ok' ? 'API ✓' : authHealthStatus === 'error' ? 'API ✕' : 'API …'}</span>
+          <span className={`auth-oauth-status ${(GOOGLE_CONFIGURED && GITHUB_CONFIGURED) ? 'ready' : 'missing'}`}>
+            OAuth {GOOGLE_CONFIGURED && GITHUB_CONFIGURED ? 'Ready' : 'Missing'}
+          </span>
           <span className="auth-role">{authRole}</span>
           <span className="auth-countdown">{authCountdown}</span>
           <button
@@ -1589,6 +1667,9 @@ function App() {
                 <button onClick={() => void refreshToken()}>
                   Refresh Token
                 </button>
+                <button onClick={logoutEverywhere}>
+                  Logout Everywhere
+                </button>
               </div>
               <div className="auth-status">
                 <span>Status: {isAuthValid ? 'Authenticated' : 'Not authenticated'}</span>
@@ -1607,6 +1688,14 @@ function App() {
                 <span>Unauthorized attempts: {authTelemetry.count}</span>
                 <span>Last seen: {authTelemetry.lastAt ?? '—'}</span>
               </div>
+              <label className="auth-persist">
+                <input
+                  type="checkbox"
+                  checked={persistAuthAudit}
+                  onChange={() => setPersistAuthAudit(prev => !prev)}
+                />
+                Persist audit log
+              </label>
               <button className="auth-toggle" onClick={toggleStorageMode}>
                 Storage: {authStorageMode === 'local' ? 'Local (persistent)' : 'Session (temporary)'}
               </button>
@@ -1615,7 +1704,7 @@ function App() {
                 <pre>{authPayload ? JSON.stringify(authPayload, null, 2) : 'No token claims available.'}</pre>
                 <div className="auth-claims-actions">
                   <button onClick={() => void copyToken()}>Copy Token</button>
-                  <button onClick={() => void navigator.clipboard.writeText(JSON.stringify(authPayload ?? {}, null, 2))}>Copy Claims JSON</button>
+                  <button onClick={() => void copyText(JSON.stringify(authPayload ?? {}, null, 2), 'Claims JSON copied.')}>Copy Claims JSON</button>
                 </div>
               </div>
               <div className="auth-audit">
@@ -1680,6 +1769,10 @@ function App() {
               {showTokenPlain && authToken && (
                 <pre className="token-preview">{authToken}</pre>
               )}
+              <div className="token-actions">
+                <button onClick={() => void copyToken()} disabled={!authToken}>Copy Token</button>
+                <button onClick={() => void copyMaskedToken()} disabled={!authToken}>Copy Masked Token</button>
+              </div>
               {authError && <div className="auth-error">{authError}</div>}
               <div className="token-meta">
                 <span>Current status: {isAuthValid ? 'Authenticated' : 'Not authenticated'}</span>
