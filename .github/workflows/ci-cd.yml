@@ -26,7 +26,7 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: read
-      packages: write
+      packages: read
 
     steps:
       - name: Checkout code
@@ -69,14 +69,6 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Log in to Container Registry
-        if: github.event_name != 'pull_request'
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Extract metadata (backend)
         id: meta-backend
         uses: docker/metadata-action@v5
@@ -90,22 +82,34 @@ jobs:
             type=sha,format=long,prefix=sha-
             type=raw,value=latest,enable={{is_default_branch}}
       
-      - name: Build and push backend Docker image
+      - name: Build backend Docker image
         id: build-backend
         uses: docker/build-push-action@v5
         with:
           context: .
           file: ./Dockerfile.backend
-          push: ${{ github.event_name != 'pull_request' }}
+          push: false
+          load: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta-backend.outputs.tags }}
           labels: ${{ steps.meta-backend.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/amd64
 
-      - name: Verify backend image published
+      - name: Export backend image archive
         if: github.event_name != 'pull_request'
-        run: bash .github/scripts/verify-ghcr.sh ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_BACKEND }} ${{ steps.build-backend.outputs.digest }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker save "${{ env.REGISTRY }}/${{ env.IMAGE_NAME_BACKEND }}:sha-${{ github.sha }}" | gzip -1 > backend-image.tar.gz
+
+      - name: Upload backend image archive
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-image
+          path: backend-image.tar.gz
+          if-no-files-found: error
 
   # Build and test frontend
   frontend:
@@ -114,7 +118,7 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: read
-      packages: write
+      packages: read
 
     steps:
       - name: Checkout code
@@ -146,14 +150,6 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Log in to Container Registry
-        if: github.event_name != 'pull_request'
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Extract metadata (frontend)
         id: meta-frontend
         uses: docker/metadata-action@v5
@@ -167,22 +163,34 @@ jobs:
             type=sha,format=long,prefix=sha-
             type=raw,value=latest,enable={{is_default_branch}}
       
-      - name: Build and push frontend Docker image
+      - name: Build frontend Docker image
         id: build-frontend
         uses: docker/build-push-action@v5
         with:
           context: .
           file: ./Dockerfile.frontend
-          push: ${{ github.event_name != 'pull_request' }}
+          push: false
+          load: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta-frontend.outputs.tags }}
           labels: ${{ steps.meta-frontend.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/amd64
 
-      - name: Verify frontend image published
+      - name: Export frontend image archive
         if: github.event_name != 'pull_request'
-        run: bash .github/scripts/verify-ghcr.sh ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_FRONTEND }} ${{ steps.build-frontend.outputs.digest }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker save "${{ env.REGISTRY }}/${{ env.IMAGE_NAME_FRONTEND }}:sha-${{ github.sha }}" | gzip -1 > frontend-image.tar.gz
+
+      - name: Upload frontend image archive
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-image
+          path: frontend-image.tar.gz
+          if-no-files-found: error
 
   # Deploy (optional - can be triggered manually or on main branch)
   deploy:
@@ -198,14 +206,11 @@ jobs:
       url: https://your-domain.duckdns.org
     permissions:
       contents: read
-      packages: read
     env:
       SSH_HOST: ${{ secrets.SSH_HOST }}
       SSH_USER: ${{ secrets.SSH_USER }}
       SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
       SSH_PORT: ${{ secrets.SSH_PORT || '22' }}
-      GHCR_USER: ${{ secrets.GHCR_USER || github.actor }}
-      GHCR_PAT: ${{ secrets.GHCR_PAT || secrets.GITHUB_TOKEN }}
 
     steps:
       - name: Checkout code
@@ -227,6 +232,20 @@ jobs:
           else
             echo "enabled=true" >> "${GITHUB_OUTPUT}"
           fi
+
+      - name: Download backend image archive
+        if: steps.gate.outputs.enabled == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: backend-image
+          path: .
+
+      - name: Download frontend image archive
+        if: steps.gate.outputs.enabled == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-image
+          path: .
 
       - name: Validate SSH private key parses
         if: steps.gate.outputs.enabled == 'true'
@@ -253,6 +272,7 @@ jobs:
           script: |
             set -euo pipefail
             mkdir -p /opt/window-aichat/.github/scripts
+            mkdir -p /opt/window-aichat/images
 
       - name: Upload deployment files
         if: steps.gate.outputs.enabled == 'true'
@@ -265,7 +285,7 @@ jobs:
           port: ${{ env.SSH_PORT }}
           timeout: 60s
           command_timeout: 10m
-          source: "docker-compose.prod.yml,nginx.conf,.github/scripts/healthcheck.sh"
+          source: "docker-compose.prod.yml,nginx.conf,.github/scripts/healthcheck.sh,backend-image.tar.gz,frontend-image.tar.gz"
           target: /opt/window-aichat
 
       - name: Deploy with Docker Compose
@@ -280,7 +300,6 @@ jobs:
           timeout: 60s
           command_timeout: 15m
           script_stop: true
-          envs: GHCR_USER,GHCR_PAT
           script: |
             set -euo pipefail
             set -x
@@ -302,15 +321,13 @@ jobs:
             export GHCR_REPO='${{ github.repository }}'
             export IMAGE_TAG="sha-${{ github.sha }}"
 
-            export DOCKER_CONFIG="$(mktemp -d)"
-            echo "${GHCR_PAT}" | docker login ghcr.io -u "${GHCR_USER}" --password-stdin
+            gzip -dc /opt/window-aichat/backend-image.tar.gz | docker load
+            gzip -dc /opt/window-aichat/frontend-image.tar.gz | docker load
 
-            $DC -f docker-compose.prod.yml pull
-            $DC -f docker-compose.prod.yml up -d --remove-orphans
+            $DC -f docker-compose.prod.yml up -d --remove-orphans --pull never
 
             curl -fsS http://localhost:8000/docs >/dev/null
             bash .github/scripts/healthcheck.sh http://localhost
 
             docker image prune -f
-            docker logout ghcr.io || true
-            rm -rf "${DOCKER_CONFIG}" || true
+            rm -f /opt/window-aichat/backend-image.tar.gz /opt/window-aichat/frontend-image.tar.gz || true
