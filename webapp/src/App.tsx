@@ -8,6 +8,7 @@ import StatusBar from './components/IDE/StatusBar';
 import DiffViewer from './components/IDE/DiffViewer';
 import { EvolveAI, LivingDocumentation } from './evolve';
 import PullRequestPanel, { type PullRequest, type PullRequestFile } from './components/IDE/PullRequestPanel';
+import { AgentLoop } from './agent/AgentLoop';
 
 interface Message {
   sender: string;
@@ -153,6 +154,12 @@ function App() {
   // EvolveAI State
   const [showEvolveAI, setShowEvolveAI] = useState(false);
   const [showLivingDocs, setShowLivingDocs] = useState(false);
+
+  // Autonomous Mode State
+  const [autonomousTask, setAutonomousTask] = useState('');
+  const [isAutonomousRunning, setIsAutonomousRunning] = useState(false);
+  const [autonomousLogs, setAutonomousLogs] = useState<string[]>([]);
+  const autonomousAbortRef = useRef<AbortController | null>(null);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -402,6 +409,76 @@ function App() {
     setMessages(prev => [...prev, {
       sender: 'System',
       text: 'Settings saved successfully.',
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    }]);
+  };
+
+  const startAutonomousMode = async () => {
+    if (!autonomousTask.trim() || isAutonomousRunning) return;
+
+    const abortController = new AbortController();
+    autonomousAbortRef.current?.abort();
+    autonomousAbortRef.current = abortController;
+    setIsAutonomousRunning(true);
+    setAutonomousLogs([]);
+
+    setMessages(prev => [...prev, {
+      sender: 'System',
+      text: `Autonomous mode started: ${autonomousTask}`,
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    }]);
+
+    try {
+      await AgentLoop.runTask(autonomousTask, {
+        apiBase: API_BASE,
+        geminiKey,
+        deepseekKey,
+        githubToken,
+        repoUrl,
+        abortSignal: abortController.signal,
+        onLog: (message) => {
+          if (abortController.signal.aborted) return;
+          setAutonomousLogs(prev => [...prev, message]);
+        },
+        onEvent: (event) => {
+          if (abortController.signal.aborted) return;
+          setMessages(prev => [...prev, {
+            sender: 'System',
+            text: `[Autonomous] ${event.message}`,
+            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+          }]);
+        },
+        context: {
+          currentFile: activeFile ?? undefined,
+          currentFileContent: activeFile ? fileContent : undefined
+        },
+        onSuccess: (filename) => {
+          setMessages(prev => [...prev, {
+            sender: 'System',
+            text: `Autonomous task completed. Output: ${filename}`,
+            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+          }]);
+        }
+      });
+    } catch (error) {
+      if (!abortController.signal.aborted) {
+        setMessages(prev => [...prev, {
+          sender: 'System',
+          text: `Autonomous mode failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        }]);
+      }
+    } finally {
+      setIsAutonomousRunning(false);
+    }
+  };
+
+  const stopAutonomousMode = () => {
+    autonomousAbortRef.current?.abort();
+    setIsAutonomousRunning(false);
+    setMessages(prev => [...prev, {
+      sender: 'System',
+      text: 'Autonomous mode stopped.',
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     }]);
   };
@@ -923,6 +1000,42 @@ function App() {
             <button className="save-btn" onClick={saveSettings}>Save</button>
           </div>
         )}
+
+        <div className="sidebar-section">
+          <h4>Autonomous Mode</h4>
+          <textarea
+            className="autonomous-input"
+            value={autonomousTask}
+            onChange={(e) => setAutonomousTask(e.target.value)}
+            placeholder="Describe the task for autonomous execution..."
+            rows={3}
+          />
+          <div className="autonomous-actions">
+            <button
+              onClick={() => void startAutonomousMode()}
+              disabled={!autonomousTask.trim() || isAutonomousRunning}
+            >
+              {isAutonomousRunning ? 'Running…' : 'Start Autonomous'}
+            </button>
+            <button
+              onClick={stopAutonomousMode}
+              disabled={!isAutonomousRunning}
+            >
+              Stop
+            </button>
+          </div>
+          <div className="autonomous-log">
+            {autonomousLogs.length === 0 ? (
+              <span className="autonomous-empty">No autonomous logs yet.</span>
+            ) : (
+              autonomousLogs.slice(-8).map((log, index) => (
+                <div key={`${log}-${index}`} className="autonomous-log-line">
+                  {log}
+                </div>
+              ))
+            )}
+          </div>
+        </div>
 
         <div className="sidebar-section">
           <button onClick={() => void cloneRepo()} disabled={isLoading || !repoUrl}>

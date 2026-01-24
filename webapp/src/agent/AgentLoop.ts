@@ -7,6 +7,7 @@ interface AgentOptions {
   deepseekKey?: string;
   githubToken?: string;
   repoUrl?: string;
+  abortSignal?: AbortSignal;
   onLog: (message: string) => void;
   onEvent?: (event: { type: 'tool'; stage: string; message: string; progress?: number }) => void;
   context?: {
@@ -19,7 +20,7 @@ interface AgentOptions {
 
 export class AgentLoop {
   static async runTask(task: string, options: AgentOptions) {
-    const { onLog, onEvent, context, onSuccess } = options;
+    const { onLog, onEvent, context, onSuccess, abortSignal } = options;
     onLog(`[Agent] Starting task: ${task}`);
     onEvent?.({ type: 'tool', stage: 'start', message: `Starting: ${task}`, progress: 0 });
 
@@ -39,6 +40,11 @@ export class AgentLoop {
     const maxAttempts = 3;
 
     while (attempts < maxAttempts) {
+      if (abortSignal?.aborted) {
+        onLog('[Agent] Aborted by user.');
+        onEvent?.({ type: 'tool', stage: 'abort', message: 'Autonomous run cancelled.' });
+        return;
+      }
       attempts++;
       onLog(`[Agent] Attempt ${attempts}/${maxAttempts}`);
       onEvent?.({ type: 'tool', stage: 'attempt', message: `Attempt ${attempts}/${maxAttempts}`, progress: attempts / maxAttempts });
@@ -79,6 +85,12 @@ export class AgentLoop {
       if (!code) {
         onLog('[Agent] Failed to generate code.');
         onEvent?.({ type: 'tool', stage: 'error', message: 'Failed to generate code' });
+        return;
+      }
+
+      if (abortSignal?.aborted) {
+        onLog('[Agent] Aborted before write.');
+        onEvent?.({ type: 'tool', stage: 'abort', message: 'Autonomous run cancelled.' });
         return;
       }
 
