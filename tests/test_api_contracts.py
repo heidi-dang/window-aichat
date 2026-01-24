@@ -17,7 +17,9 @@ def client(tmp_path, monkeypatch):
 
 
 def test_fs_write_and_read_roundtrip(client: TestClient):
-    write_res = client.post("/api/fs/write", json={"path": "hello.txt", "content": "hi"})
+    write_res = client.post(
+        "/api/fs/write", json={"path": "hello.txt", "content": "hi"}
+    )
     assert write_res.status_code == 200
     write_body = write_res.json()
     assert write_body["status"] == "success"

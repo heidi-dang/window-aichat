@@ -6,18 +6,19 @@ from typing import Dict, Generator, Optional
 from window_aichat.config import SecureConfig
 from window_aichat.core.engine import AIEngine
 
+
 class AIChatClient:
     def __init__(self, config_path: str):
         self.logger = logging.getLogger("window_aichat.core.ai_client")
         self.config_path = config_path
-        
+
         try:
             self.secure_config = SecureConfig(config_path)
             self.config = self.secure_config.load_config()
-            
+
             # Initialize the new engine
             self.engine = AIEngine(self.config)
-            
+
             # Legacy properties for backward compatibility with Desktop UI
             self.gemini_available = self.engine.get_model("gemini") is not None
             self.deepseek_available = self.engine.get_model("deepseek") is not None
@@ -25,7 +26,7 @@ class AIChatClient:
             self.deepseek_error = None
             self.gemini_latency = None
             self.deepseek_latency = None
-            
+
         except Exception as e:
             self.logger.error(f"Failed to initialize AIChatClient: {e}", exc_info=True)
             raise
@@ -89,6 +90,8 @@ class AIChatClient:
 
         return responses
 
-    def stream_chat(self, prompt: str, model_name: str = "gemini") -> Generator[str, None, None]:
+    def stream_chat(
+        self, prompt: str, model_name: str = "gemini"
+    ) -> Generator[str, None, None]:
         """New method for streaming chat responses."""
         return self.engine.stream_generate(prompt, model_name)

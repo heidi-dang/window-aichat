@@ -22,4 +22,3 @@ def test_ws_tools_emits_tool_frames(client: TestClient):
         first = ws.receive_json()
         assert first["type"] == "tool"
         assert first["stage"] in {"start", "error"}
-

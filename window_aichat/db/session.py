@@ -21,7 +21,11 @@ def get_database_url() -> str:
 
 engine = create_engine(
     get_database_url(),
-    connect_args={"check_same_thread": False} if get_database_url().startswith("sqlite:///") else {},
+    connect_args=(
+        {"check_same_thread": False}
+        if get_database_url().startswith("sqlite:///")
+        else {}
+    ),
     future=True,
 )
 
@@ -34,4 +38,3 @@ def get_db() -> Generator[Session, None, None]:
         yield db
     finally:
         db.close()
-

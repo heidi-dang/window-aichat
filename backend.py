@@ -250,12 +250,12 @@ class Token(BaseModel):
 def get_pr_analysis_prompt(pr_data: Dict[str, Any]) -> str:
     """Generate AI prompt for PR analysis with super-context"""
     files_info = []
-    for file in pr_data.get('files', []):
+    for file in pr_data.get("files", []):
         file_info = f"File: {file['path']} ({file['status']})\n"
-        if file.get('original_content') and file.get('modified_content'):
+        if file.get("original_content") and file.get("modified_content"):
             file_info += f"Changes:\n{file['original_content'][:500]}...\n→\n{file['modified_content'][:500]}...\n"
         files_info.append(file_info)
-    
+
     prompt = f"""
 Analyze this pull request with comprehensive context:
 
@@ -806,29 +806,28 @@ async def list_pull_requests(current_user: User = Depends(get_current_user)):
     """List all pull requests for the user"""
     if not current_user:
         raise HTTPException(status_code=401, detail="Authentication required")
-    
+
     # For now, return empty list - in a real implementation, this would query a database
     return {"pull_requests": []}
 
 
 @app.post("/api/pr/create")
 async def create_pull_request(
-    req: PullRequestRequest,
-    current_user: User = Depends(get_current_user)
+    req: PullRequestRequest, current_user: User = Depends(get_current_user)
 ):
     """Create a new pull request"""
     if not current_user:
         raise HTTPException(status_code=401, detail="Authentication required")
-    
+
     try:
         # Generate a unique PR ID
         pr_id = f"pr_{int(time.time())}_{current_user.id}"
-        
+
         # In a real implementation, this would:
         # 1. Parse git diff between branches
         # 2. Extract file changes
         # 3. Store PR in database
-        
+
         pr_data = {
             "id": pr_id,
             "title": req.title,
@@ -838,25 +837,22 @@ async def create_pull_request(
             "author": current_user.email,
             "created_at": datetime.now().isoformat(),
             "status": "open",
-            "files": []  # Would contain actual file changes
+            "files": [],  # Would contain actual file changes
         }
-        
+
         return {"pull_request": pr_data}
-        
+
     except Exception as e:
         logger.error(f"Error creating pull request: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/api/pr/{pr_id}")
-async def get_pull_request(
-    pr_id: str,
-    current_user: User = Depends(get_current_user)
-):
+async def get_pull_request(pr_id: str, current_user: User = Depends(get_current_user)):
     """Get details of a specific pull request"""
     if not current_user:
         raise HTTPException(status_code=401, detail="Authentication required")
-    
+
     # For now, return a mock PR - in a real implementation, this would query database
     mock_pr = {
         "id": pr_id,
@@ -874,24 +870,22 @@ async def get_pull_request(
                 "additions": 10,
                 "deletions": 5,
                 "original_content": "// Original code\nfunction oldFunction() {\n  return 'old';\n}",
-                "modified_content": "// Modified code\nfunction newFunction() {\n  return 'new';\n}"
+                "modified_content": "// Modified code\nfunction newFunction() {\n  return 'new';\n}",
             }
-        ]
+        ],
     }
-    
+
     return {"pull_request": mock_pr}
 
 
 @app.post("/api/pr/{pr_id}/analyze")
 async def analyze_pull_request(
-    pr_id: str,
-    req: PRAnalysisRequest,
-    current_user: User = Depends(get_current_user)
+    pr_id: str, req: PRAnalysisRequest, current_user: User = Depends(get_current_user)
 ):
     """Analyze a pull request using AI"""
     if not current_user:
         raise HTTPException(status_code=401, detail="Authentication required")
-    
+
     try:
         # Get PR data (in real implementation, this would come from database)
         pr_data = {
@@ -906,30 +900,30 @@ async def analyze_pull_request(
                     "path": "src/example.js",
                     "status": "modified",
                     "original_content": "// Original code\nfunction oldFunction() {\n  return 'old';\n}",
-                    "modified_content": "// Modified code\nfunction newFunction() {\n  return 'new';\n}"
+                    "modified_content": "// Modified code\nfunction newFunction() {\n  return 'new';\n}",
                 }
-            ]
+            ],
         }
-        
+
         # Create AI client
         client = get_ai_client(ChatRequest(message="", gemini_key=req.gemini_key))
-        
+
         # Generate analysis prompt
         prompt = get_pr_analysis_prompt(pr_data)
-        
+
         # Get AI analysis
         analysis_text = client.ask_gemini(prompt)
-        
+
         # Parse AI response (in a real implementation, this would be more sophisticated)
         ai_analysis = {
             "summary": "AI analysis completed for this pull request.",
             "risks": ["Potential breaking changes detected", "Consider adding tests"],
             "suggestions": ["Add error handling", "Update documentation"],
-            "confidence": 0.85
+            "confidence": 0.85,
         }
-        
+
         return {"analysis": ai_analysis}
-        
+
     except Exception as e:
         logger.error(f"Error analyzing pull request {pr_id}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
@@ -937,21 +931,19 @@ async def analyze_pull_request(
 
 @app.post("/api/pr/{pr_id}/action")
 async def pull_request_action(
-    pr_id: str,
-    req: PRActionRequest,
-    current_user: User = Depends(get_current_user)
+    pr_id: str, req: PRActionRequest, current_user: User = Depends(get_current_user)
 ):
     """Perform an action on a pull request (approve, request changes, merge)"""
     if not current_user:
         raise HTTPException(status_code=401, detail="Authentication required")
-    
+
     try:
         # In a real implementation, this would:
         # 1. Validate the action
         # 2. Update PR status in database
         # 3. Send notifications
         # 4. Execute git operations for merge
-        
+
         if req.action == "approve":
             return {"message": f"Pull request {pr_id} approved"}
         elif req.action == "request_changes":
@@ -960,9 +952,11 @@ async def pull_request_action(
             return {"message": f"Pull request {pr_id} merged"}
         else:
             raise HTTPException(status_code=400, detail="Invalid action")
-            
+
     except Exception as e:
-        logger.error(f"Error performing action {req.action} on PR {pr_id}: {e}", exc_info=True)
+        logger.error(
+            f"Error performing action {req.action} on PR {pr_id}: {e}", exc_info=True
+        )
         raise HTTPException(status_code=500, detail=str(e))
 
 

@@ -6,6 +6,7 @@ import logging
 
 logger = logging.getLogger("window_aichat.services.github")
 
+
 class GitHubHandler:
     def __init__(self, cache_dir: str, token: Optional[str] = None):
         self.cache_dir = cache_dir

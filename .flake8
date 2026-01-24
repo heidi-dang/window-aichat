@@ -1,0 +1,3 @@
+[flake8]
+exclude = .git,__pycache__,build,dist,.eggs,.tox,.venv,venv,env,ENV,node_modules,server_cache,workspace
+max-line-length = 127

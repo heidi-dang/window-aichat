@@ -8,6 +8,7 @@ from dotenv import load_dotenv
 # Load environment variables from .env file if it exists
 load_dotenv()
 
+
 class SecureConfig:
     def __init__(self, config_path: str):
         self.config_path = os.path.abspath(config_path)
