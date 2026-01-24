@@ -21,9 +21,13 @@ class User(Base):
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
     username: Mapped[str] = mapped_column(String(120), unique=True, index=True)
     password_hash: Mapped[str] = mapped_column(String(512))
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
 
-    sessions = relationship("ProjectSession", back_populates="user", cascade="all, delete-orphan")
+    sessions = relationship(
+        "ProjectSession", back_populates="user", cascade="all, delete-orphan"
+    )
 
 
 class ProjectSession(Base):
@@ -34,11 +38,17 @@ class ProjectSession(Base):
     name: Mapped[str] = mapped_column(String(200), default="New Session")
     model: Mapped[str] = mapped_column(String(50), default="gemini")
     pinned_files_json: Mapped[str] = mapped_column(Text, default="[]")
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc), index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
 
     user = relationship("User", back_populates="sessions")
-    messages = relationship("SessionMessage", back_populates="session", cascade="all, delete-orphan")
+    messages = relationship(
+        "SessionMessage", back_populates="session", cascade="all, delete-orphan"
+    )
 
     def pinned_files(self) -> list[str]:
         try:
@@ -54,10 +64,14 @@ class SessionMessage(Base):
     __tablename__ = "session_messages"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
-    session_id: Mapped[str] = mapped_column(String(32), ForeignKey("project_sessions.id"), index=True)
+    session_id: Mapped[str] = mapped_column(
+        String(32), ForeignKey("project_sessions.id"), index=True
+    )
     role: Mapped[str] = mapped_column(String(20))
     content: Mapped[str] = mapped_column(Text)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc), index=True
+    )
 
     session = relationship("ProjectSession", back_populates="messages")
 
@@ -72,8 +86,12 @@ class MemoryItem(Base):
     value: Mapped[str] = mapped_column(Text)
     source: Mapped[Optional[str]] = mapped_column(String(200), default=None)
     confidence: Mapped[float] = mapped_column(Float, default=0.7)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc), index=True
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc), index=True
+    )
 
 
 class EmbeddingItem(Base):
@@ -86,7 +104,9 @@ class EmbeddingItem(Base):
     content: Mapped[str] = mapped_column(Text)
     vector_json: Mapped[str] = mapped_column(Text)
     dims: Mapped[int] = mapped_column(Integer)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc), index=True
+    )
 
     def vector(self) -> list[float]:
         return json.loads(self.vector_json)
@@ -100,10 +120,16 @@ class AuditLog(Base):
     __tablename__ = "audit_logs"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
-    user_id: Mapped[Optional[str]] = mapped_column(String(32), ForeignKey("users.id"), nullable=True, index=True)
+    user_id: Mapped[Optional[str]] = mapped_column(
+        String(32), ForeignKey("users.id"), nullable=True, index=True
+    )
     action: Mapped[str] = mapped_column(String(80), index=True)
     path: Mapped[Optional[str]] = mapped_column(String(800), default=None)
     bytes: Mapped[int] = mapped_column(Integer, default=0)
-    request_id: Mapped[Optional[str]] = mapped_column(String(64), default=None, index=True)
+    request_id: Mapped[Optional[str]] = mapped_column(
+        String(64), default=None, index=True
+    )
     ip: Mapped[Optional[str]] = mapped_column(String(80), default=None)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc), index=True
+    )

@@ -23,10 +23,11 @@ class RateLimiter:
             dq.popleft()
         if len(dq) >= self.config.max_requests:
             remaining = 0
-            reset_in = int(max(0, dq[0] - window_start)) if dq else self.config.window_seconds
+            reset_in = (
+                int(max(0, dq[0] - window_start)) if dq else self.config.window_seconds
+            )
             return False, remaining, reset_in
         dq.append(now)
         remaining = self.config.max_requests - len(dq)
         reset_in = int(self.config.window_seconds)
         return True, remaining, reset_in
-

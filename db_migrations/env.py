@@ -11,7 +11,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from window_aichat.db.models import Base
 from window_aichat.db.session import get_database_url
 
-
 config = context.config
 
 if config.config_file_name is not None:
@@ -41,8 +40,12 @@ def run_migrations_offline() -> None:
 
 def run_migrations_online() -> None:
     configuration = config.get_section(config.config_ini_section) or {}
-    configuration["sqlalchemy.url"] = _coerce_url(configuration.get("sqlalchemy.url") or get_database_url())
-    connectable = engine_from_config(configuration, prefix="sqlalchemy.", poolclass=pool.NullPool)
+    configuration["sqlalchemy.url"] = _coerce_url(
+        configuration.get("sqlalchemy.url") or get_database_url()
+    )
+    connectable = engine_from_config(
+        configuration, prefix="sqlalchemy.", poolclass=pool.NullPool
+    )
 
     with connectable.connect() as connection:
         context.configure(connection=connection, target_metadata=target_metadata)

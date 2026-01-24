@@ -32,3 +32,7 @@ requires-python = ">=3.8"
 
 [project.scripts]
 window-aichat = "window_aichat.__main__:main"
+
+[tool.black]
+line-length = 88
+extend-exclude = '(\.venv|venv|env|ENV|node_modules|server_cache|workspace)/'

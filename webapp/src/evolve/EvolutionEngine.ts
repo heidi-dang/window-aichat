@@ -1,5 +1,4 @@
 import VectorStoreService from '../utils/VectorStoreService';
-
 export interface CodePattern {
   id: string;
   type: 'function' | 'class' | 'component' | 'hook' | 'api' | 'config';
@@ -140,7 +139,7 @@ export class EvolutionEngine {
     if (!startIndex) return '';
     const lines = content.substring(startIndex).split('\n');
     let braceCount = 0;
-    let contentLines = [];
+    const contentLines: string[] = [];
     let foundOpening = false;
 
     for (const line of lines) {
@@ -164,7 +163,7 @@ export class EvolutionEngine {
     if (!startIndex) return '';
     const lines = content.substring(startIndex).split('\n');
     let braceCount = 0;
-    let contentLines = [];
+    const contentLines: string[] = [];
 
     for (const line of lines) {
       contentLines.push(line);
@@ -434,16 +433,15 @@ export class EvolutionEngine {
         console.warn('[EvolveAI] Failed to list files:', response.status, response.statusText);
         return [];
       }
-      const files = await response.json();
-      if (!Array.isArray(files)) {
-        console.warn('[EvolveAI] Unexpected file list response:', files);
-        return [];
-      }
-      return files
-        .filter((f: any) => f?.type === 'file')
-        .filter((f: any) => typeof f?.name === 'string' && f.name.match(/\.(ts|tsx|js|jsx)$/))
-        .map((f: any) => f.path)
-        .filter((path: unknown): path is string => typeof path === 'string');
+      const files = (await response.json()) as unknown;
+      const list = Array.isArray(files) ? files : [];
+
+      return list
+        .filter((entry): entry is Record<string, unknown> => !!entry && typeof entry === 'object')
+        .filter((entry) => entry.type === 'file')
+        .filter((entry) => typeof entry.name === 'string' && /\.(ts|tsx|js|jsx)$/.test(entry.name))
+        .map((entry) => String(entry.path ?? ''))
+        .filter(Boolean);
     } catch (error) {
       console.error('[EvolveAI] Failed to get code files:', error);
       return [];

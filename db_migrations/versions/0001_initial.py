@@ -1,13 +1,12 @@
 """initial
 
 Revision ID: 0001_initial
-Revises: 
+Revises:
 Create Date: 2026-01-24
 """
 
 from alembic import op
 import sqlalchemy as sa
-
 
 revision = "0001_initial"
 down_revision = None
@@ -28,7 +27,9 @@ def upgrade() -> None:
     op.create_table(
         "project_sessions",
         sa.Column("id", sa.String(length=32), primary_key=True),
-        sa.Column("user_id", sa.String(length=32), sa.ForeignKey("users.id"), nullable=False),
+        sa.Column(
+            "user_id", sa.String(length=32), sa.ForeignKey("users.id"), nullable=False
+        ),
         sa.Column("name", sa.String(length=200), nullable=False),
         sa.Column("model", sa.String(length=50), nullable=False),
         sa.Column("pinned_files_json", sa.Text(), nullable=False),
@@ -36,23 +37,36 @@ def upgrade() -> None:
         sa.Column("created_at", sa.DateTime(), nullable=False),
     )
     op.create_index("ix_project_sessions_user_id", "project_sessions", ["user_id"])
-    op.create_index("ix_project_sessions_updated_at", "project_sessions", ["updated_at"])
+    op.create_index(
+        "ix_project_sessions_updated_at", "project_sessions", ["updated_at"]
+    )
 
     op.create_table(
         "session_messages",
         sa.Column("id", sa.String(length=32), primary_key=True),
-        sa.Column("session_id", sa.String(length=32), sa.ForeignKey("project_sessions.id"), nullable=False),
+        sa.Column(
+            "session_id",
+            sa.String(length=32),
+            sa.ForeignKey("project_sessions.id"),
+            nullable=False,
+        ),
         sa.Column("role", sa.String(length=20), nullable=False),
         sa.Column("content", sa.Text(), nullable=False),
         sa.Column("created_at", sa.DateTime(), nullable=False),
     )
-    op.create_index("ix_session_messages_session_id", "session_messages", ["session_id"])
-    op.create_index("ix_session_messages_created_at", "session_messages", ["created_at"])
+    op.create_index(
+        "ix_session_messages_session_id", "session_messages", ["session_id"]
+    )
+    op.create_index(
+        "ix_session_messages_created_at", "session_messages", ["created_at"]
+    )
 
     op.create_table(
         "memory_items",
         sa.Column("id", sa.String(length=32), primary_key=True),
-        sa.Column("user_id", sa.String(length=32), sa.ForeignKey("users.id"), nullable=False),
+        sa.Column(
+            "user_id", sa.String(length=32), sa.ForeignKey("users.id"), nullable=False
+        ),
         sa.Column("kind", sa.String(length=40), nullable=False),
         sa.Column("key", sa.String(length=200), nullable=False),
         sa.Column("value", sa.Text(), nullable=False),
@@ -68,7 +82,9 @@ def upgrade() -> None:
     op.create_table(
         "embedding_items",
         sa.Column("id", sa.String(length=32), primary_key=True),
-        sa.Column("user_id", sa.String(length=32), sa.ForeignKey("users.id"), nullable=False),
+        sa.Column(
+            "user_id", sa.String(length=32), sa.ForeignKey("users.id"), nullable=False
+        ),
         sa.Column("namespace", sa.String(length=80), nullable=False),
         sa.Column("ref", sa.String(length=500), nullable=False),
         sa.Column("content", sa.Text(), nullable=False),
@@ -84,7 +100,9 @@ def upgrade() -> None:
     op.create_table(
         "audit_logs",
         sa.Column("id", sa.String(length=32), primary_key=True),
-        sa.Column("user_id", sa.String(length=32), sa.ForeignKey("users.id"), nullable=True),
+        sa.Column(
+            "user_id", sa.String(length=32), sa.ForeignKey("users.id"), nullable=True
+        ),
         sa.Column("action", sa.String(length=80), nullable=False),
         sa.Column("path", sa.String(length=800), nullable=True),
         sa.Column("bytes", sa.Integer(), nullable=False),
@@ -105,4 +123,3 @@ def downgrade() -> None:
     op.drop_table("session_messages")
     op.drop_table("project_sessions")
     op.drop_table("users")
-

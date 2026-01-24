@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import DiffViewer from './DiffViewer';
 
-interface PullRequestFile {
+export interface PullRequestFile {
   path: string;
   status: 'added' | 'modified' | 'deleted' | 'renamed';
   additions: number;
@@ -10,7 +10,7 @@ interface PullRequestFile {
   modifiedContent?: string;
 }
 
-interface PullRequest {
+export interface PullRequest {
   id: string;
   title: string;
   description: string;

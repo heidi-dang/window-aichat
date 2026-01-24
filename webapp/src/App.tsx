@@ -6,8 +6,8 @@ import MonacoWrapper from './components/IDE/MonacoWrapper';
 import FileExplorer from './components/IDE/FileExplorer';
 import StatusBar from './components/IDE/StatusBar';
 import DiffViewer from './components/IDE/DiffViewer';
-import PullRequestPanel from './components/IDE/PullRequestPanel';
 import { EvolveAI, LivingDocumentation } from './evolve';
+import PullRequestPanel, { type PullRequest, type PullRequestFile } from './components/IDE/PullRequestPanel';
 
 interface Message {
   sender: string;
@@ -20,31 +20,70 @@ interface FileEntry {
   type: 'file' | 'directory';
   path: string;
 }
-
-interface PullRequestFile {
-  path: string;
-  status: 'added' | 'modified' | 'deleted' | 'renamed';
-  additions: number;
-  deletions: number;
-  originalContent?: string;
-  modifiedContent?: string;
+function asString(value: unknown, fallback = ''): string {
+  return typeof value === 'string' ? value : fallback;
 }
 
-interface PullRequest {
-  id: string;
-  title: string;
-  description: string;
-  sourceBranch: string;
-  targetBranch: string;
-  author: string;
-  createdAt: string;
-  status: 'open' | 'closed' | 'merged' | 'approved';
-  files: PullRequestFile[];
-  aiAnalysis?: {
-    summary: string;
-    risks: string[];
-    suggestions: string[];
-    confidence: number;
+function asNumber(value: unknown, fallback = 0): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+}
+
+function asPullRequestStatus(value: unknown): PullRequest['status'] {
+  if (value === 'open' || value === 'closed' || value === 'merged' || value === 'approved') return value;
+  return 'open';
+}
+
+function asPullRequestFileStatus(value: unknown): PullRequestFile['status'] {
+  if (value === 'added' || value === 'modified' || value === 'deleted' || value === 'renamed') return value;
+  return 'modified';
+}
+
+function toPullRequest(value: unknown): PullRequest | null {
+  if (!value || typeof value !== 'object') return null;
+  const v = value as Record<string, unknown>;
+  const filesValue = v.files;
+  const filesArray = Array.isArray(filesValue) ? filesValue : [];
+
+  const files: PullRequestFile[] = filesArray
+    .filter((entry) => entry && typeof entry === 'object')
+    .map((entry) => {
+      const e = entry as Record<string, unknown>;
+      return {
+        path: asString(e.path),
+        status: asPullRequestFileStatus(e.status),
+        additions: asNumber(e.additions),
+        deletions: asNumber(e.deletions),
+        originalContent: asString(e.original_content ?? e.originalContent),
+        modifiedContent: asString(e.modified_content ?? e.modifiedContent)
+      };
+    });
+
+  const maybeAi = v.aiAnalysis;
+  const aiAnalysis =
+    maybeAi && typeof maybeAi === 'object'
+      ? (maybeAi as { summary?: unknown; risks?: unknown; suggestions?: unknown; confidence?: unknown })
+      : null;
+
+  return {
+    id: asString(v.id),
+    title: asString(v.title),
+    description: asString(v.description),
+    sourceBranch: asString(v.sourceBranch ?? v.source_branch),
+    targetBranch: asString(v.targetBranch ?? v.target_branch),
+    author: asString(v.author),
+    createdAt: asString(v.createdAt ?? v.created_at),
+    status: asPullRequestStatus(v.status),
+    files,
+    aiAnalysis: aiAnalysis
+      ? {
+          summary: asString(aiAnalysis.summary),
+          risks: Array.isArray(aiAnalysis.risks) ? (aiAnalysis.risks.filter((r) => typeof r === 'string') as string[]) : [],
+          suggestions: Array.isArray(aiAnalysis.suggestions)
+            ? (aiAnalysis.suggestions.filter((s) => typeof s === 'string') as string[])
+            : [],
+          confidence: asNumber(aiAnalysis.confidence)
+        }
+      : undefined
   };
 }
 
@@ -563,7 +602,16 @@ function App() {
       const res = await fetch(`${API_BASE}/api/pr/${prId}`);
       if (res.ok) {
         const data = await res.json();
-        setCurrentPR(data.pull_request);
+        const pr = toPullRequest((data as Record<string, unknown>).pull_request);
+        if (!pr) {
+          setMessages(prev => [...prev, {
+            sender: 'System',
+            text: 'Failed to load pull request: invalid response payload.',
+            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+          }]);
+          return;
+        }
+        setCurrentPR(pr);
         setShowPRPanel(true);
         setMessages(prev => [...prev, {
           sender: 'System',

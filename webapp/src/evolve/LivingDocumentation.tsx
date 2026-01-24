@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Badge } from '../components/ui/badge';
@@ -26,14 +26,11 @@ export const LivingDocumentation: React.FC<LivingDocumentationProps> = ({ apiBas
   const [selectedSection, setSelectedSection] = useState<DocumentationSection | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
 
-  useEffect(() => {
-    analyzeCodebase();
-  }, []);
-
-  const analyzeCodebase = async () => {
+  const analyzeCodebase = useCallback(async () => {
     setIsAnalyzing(true);
     void apiBase;
     try {
+      const source = apiBase ? apiBase.replace(/\/$/, '') : 'local';
       // This would integrate with the EvolutionEngine to analyze code
       const mockSections: DocumentationSection[] = [
         {
@@ -42,6 +39,7 @@ export const LivingDocumentation: React.FC<LivingDocumentationProps> = ({ apiBas
           content: `# API Overview
 
 This document provides a comprehensive overview of the Window-AIChat API architecture.
+Source: ${source}
 
 ## Core Components
 
@@ -102,7 +100,11 @@ The EvolveAI system integrates seamlessly with existing Window-AIChat components
     } finally {
       setIsAnalyzing(false);
     }
-  };
+  }, [apiBase]);
+
+  useEffect(() => {
+    void analyzeCodebase();
+  }, [analyzeCodebase]);
 
   const syncDocumentation = async () => {
     setIsSyncing(true);

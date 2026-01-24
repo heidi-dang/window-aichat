@@ -11,7 +11,9 @@ from jose import jwt
 def hash_password(password: str) -> str:
     salt = secrets.token_bytes(16)
     iterations = 200_000
-    dk = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, iterations, dklen=32)
+    dk = hashlib.pbkdf2_hmac(
+        "sha256", password.encode("utf-8"), salt, iterations, dklen=32
+    )
     return f"pbkdf2_sha256${iterations}${base64.b64encode(salt).decode()}${base64.b64encode(dk).decode()}"
 
 
@@ -23,7 +25,9 @@ def verify_password(password: str, stored: str) -> bool:
         iterations = int(iters_str)
         salt = base64.b64decode(salt_b64.encode())
         expected = base64.b64decode(hash_b64.encode())
-        dk = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, iterations, dklen=len(expected))
+        dk = hashlib.pbkdf2_hmac(
+            "sha256", password.encode("utf-8"), salt, iterations, dklen=len(expected)
+        )
         return secrets.compare_digest(dk, expected)
     except Exception:
         return False
@@ -39,7 +43,12 @@ def _jwt_secret() -> str:
 def issue_token(user_id: str, username: str) -> str:
     now = datetime.now(timezone.utc)
     exp = now + timedelta(hours=int(os.getenv("WINDOW_AICHAT_JWT_TTL_HOURS", "72")))
-    payload = {"sub": user_id, "username": username, "iat": int(now.timestamp()), "exp": int(exp.timestamp())}
+    payload = {
+        "sub": user_id,
+        "username": username,
+        "iat": int(now.timestamp()),
+        "exp": int(exp.timestamp()),
+    }
     return jwt.encode(payload, _jwt_secret(), algorithm="HS256")
 
 
