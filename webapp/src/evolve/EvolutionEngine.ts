@@ -1,4 +1,5 @@
 import VectorStoreService from '../utils/VectorStoreService';
+import { getToken } from '../utils/authStorage';
 export interface CodePattern {
   id: string;
   type: 'function' | 'class' | 'component' | 'hook' | 'api' | 'config';
@@ -428,7 +429,7 @@ export class EvolutionEngine {
 
   private async getAllCodeFiles(apiBase: string): Promise<string[]> {
     try {
-      const token = localStorage.getItem('token') || '';
+      const token = getToken();
       const response = await fetch(`${apiBase}/api/fs/list`, {
         headers: token ? { Authorization: `Bearer ${token}` } : undefined
       });

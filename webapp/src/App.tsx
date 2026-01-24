@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import type * as MonacoEditor from 'monaco-editor';
 import { AnimatePresence, motion } from 'framer-motion';
 import './App.css';
+import { getStorageMode, setStorageMode, setToken as persistToken, clearToken as removeToken, getToken } from './utils/authStorage';
 import MonacoWrapper from './components/IDE/MonacoWrapper';
 import FileExplorer from './components/IDE/FileExplorer';
 import StatusBar from './components/IDE/StatusBar';
@@ -54,6 +55,15 @@ function formatExpiry(exp?: number | null): string {
   if (!exp || !Number.isFinite(exp)) return 'Unknown expiry';
   const date = new Date(exp * 1000);
   return date.toLocaleString();
+}
+
+function formatCountdown(exp?: number | null): string {
+  if (!exp || !Number.isFinite(exp)) return 'No expiry';
+  const diffMs = exp * 1000 - Date.now();
+  if (diffMs <= 0) return 'Expired';
+  const minutes = Math.floor(diffMs / 60000);
+  const seconds = Math.floor((diffMs % 60000) / 1000);
+  return `${minutes}m ${seconds}s`;
 }
 
 function toPullRequest(value: unknown): PullRequest | null {
@@ -151,12 +161,16 @@ function App() {
   const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
   const [authUsername, setAuthUsername] = useState('');
   const [authPassword, setAuthPassword] = useState('');
-  const [authToken, setAuthToken] = useState(localStorage.getItem('token') || '');
-  const [authPayload, setAuthPayload] = useState<Record<string, unknown> | null>(decodeJwt(localStorage.getItem('token') || ''));
+  const [authStorageMode, setAuthStorageMode] = useState<'local' | 'session'>(getStorageMode());
+  const [authToken, setAuthToken] = useState(getToken());
+  const [authPayload, setAuthPayload] = useState<Record<string, unknown> | null>(decodeJwt(getToken()));
   const [authError, setAuthError] = useState<string | null>(null);
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [showTokenModal, setShowTokenModal] = useState(false);
   const [manualToken, setManualToken] = useState('');
+  const [authToast, setAuthToast] = useState<string | null>(null);
+  const [authTelemetry, setAuthTelemetry] = useState<{ count: number; lastAt?: string }>(() => ({ count: 0 }));
+  const [authCountdown, setAuthCountdown] = useState(() => formatCountdown(decodeJwt(getToken())?.exp as number | null));
 
   // File System & Editor State
   const [files, setFiles] = useState<FileEntry[]>([]);
@@ -200,24 +214,34 @@ function App() {
     return typeof exp === 'number' ? exp : null;
   }, [authPayload]);
 
+  const isAuthExpired = Boolean(authExpiry && authExpiry * 1000 <= Date.now());
+
   const isAuthValid = Boolean(authToken && authPayload && (!authExpiry || authExpiry * 1000 > Date.now()));
 
   const setToken = (token: string) => {
-    localStorage.setItem('token', token);
+    persistToken(token, authStorageMode);
     setAuthToken(token);
     setAuthPayload(decodeJwt(token));
   };
 
   const clearToken = () => {
-    localStorage.removeItem('token');
+    removeToken();
     setAuthToken('');
     setAuthPayload(null);
+  };
+
+  const reportUnauthorized = (context: string) => {
+    const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    setAuthTelemetry(prev => ({ count: prev.count + 1, lastAt: timestamp }));
+    setAuthToast(`Login required for ${context}.`);
+    setTimeout(() => setAuthToast(null), 3500);
   };
 
   const ensureAuth = (context: string) => {
     if (isAuthValid) return true;
     setAuthError(`Authentication required to ${context}.`);
     setShowAuthModal(true);
+    reportUnauthorized(context);
     setMessages(prev => [...prev, {
       sender: 'System',
       text: `Authentication required to ${context}. Please log in or paste a token.`,
@@ -231,6 +255,7 @@ function App() {
     const errorText = await readErrorText(res);
     setAuthError(errorText);
     setShowAuthModal(true);
+    reportUnauthorized(context);
     setMessages(prev => [...prev, {
       sender: 'System',
       text: `Authentication required (${context}): ${errorText}`,
@@ -275,6 +300,15 @@ function App() {
     setShowTokenModal(false);
     setShowAuthModal(false);
     setAuthError(null);
+  };
+
+  const toggleStorageMode = () => {
+    const nextMode = authStorageMode === 'local' ? 'session' : 'local';
+    setAuthStorageMode(nextMode);
+    setStorageMode(nextMode);
+    if (authToken) {
+      persistToken(authToken, nextMode);
+    }
   };
 
   const oauthLogin = async (provider: 'google' | 'github') => {
@@ -353,6 +387,13 @@ function App() {
   }, []);
 
   useEffect(() => {
+    const timer = window.setInterval(() => {
+      setAuthCountdown(formatCountdown(authExpiry));
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [authExpiry]);
+
+  useEffect(() => {
     void fetchFiles();
   }, []);
 
@@ -365,7 +406,7 @@ function App() {
   const fetchFiles = async () => {
     try {
       if (!ensureAuth('list files')) return;
-      const token = localStorage.getItem('token') || '';
+      const token = getToken();
       const res = await fetch(`${API_BASE}/api/fs/list`, {
         headers: token ? { Authorization: `Bearer ${token}` } : undefined
       });
@@ -395,7 +436,7 @@ function App() {
   const openFile = async (path: string) => {
     try {
       if (!ensureAuth('read files')) return;
-      const token = localStorage.getItem('token') || '';
+      const token = getToken();
       const res = await fetch(`${API_BASE}/api/fs/read`, {
         method: 'POST',
         headers: {
@@ -443,7 +484,7 @@ function App() {
     
     try {
       if (!ensureAuth('write files')) return;
-      const token = localStorage.getItem('token') || '';
+      const token = getToken();
       const res = await fetch(`${API_BASE}/api/fs/write`, {
         method: 'POST',
         headers: {
@@ -1124,6 +1165,11 @@ function App() {
   }, [resizePanel, stopResize]);
   return (
     <div className="app-container">
+      {authToast && (
+        <div className="auth-toast" onClick={() => setShowAuthModal(true)}>
+          {authToast}
+        </div>
+      )}
       {/* Sidebar */}
       <div className={`sidebar-area ${activeMobilePanel === 'sidebar' ? 'visible' : ''}`} style={{ width: sidebarWidth }} ref={sidebarRef}>
         <div className="sidebar-header">
@@ -1371,6 +1417,21 @@ function App() {
               <div className="auth-status">
                 <span>Status: {isAuthValid ? 'Authenticated' : 'Not authenticated'}</span>
                 <span>Expiry: {formatExpiry(authExpiry)}</span>
+                <span>Countdown: {authCountdown}</span>
+              </div>
+              {isAuthExpired && (
+                <div className="auth-expired">Session expired. Re-authenticate to refresh your token.</div>
+              )}
+              <div className="auth-telemetry">
+                <span>Unauthorized attempts: {authTelemetry.count}</span>
+                <span>Last seen: {authTelemetry.lastAt ?? '—'}</span>
+              </div>
+              <button className="auth-toggle" onClick={toggleStorageMode}>
+                Storage: {authStorageMode === 'local' ? 'Local (persistent)' : 'Session (temporary)'}
+              </button>
+              <div className="auth-claims">
+                <div className="auth-claims-title">JWT Claims</div>
+                <pre>{authPayload ? JSON.stringify(authPayload, null, 2) : 'No token claims available.'}</pre>
               </div>
             </div>
           </div>
@@ -1397,6 +1458,7 @@ function App() {
               <div className="token-meta">
                 <span>Current status: {isAuthValid ? 'Authenticated' : 'Not authenticated'}</span>
                 <span>Expiry: {formatExpiry(authExpiry)}</span>
+                <span>Countdown: {authCountdown}</span>
               </div>
               <div className="auth-actions">
                 <button className="primary" onClick={saveManualToken}>Save Token</button>
@@ -1436,10 +1498,18 @@ function App() {
                 placeholder="Describe the task for autonomous execution..."
                 rows={4}
               />
+              {!isAuthValid && (
+                <div className="autonomous-auth-cta">
+                  <span>Authentication required to run autonomous tasks.</span>
+                  <button onClick={() => setShowAuthModal(true)}>
+                    Login to Continue
+                  </button>
+                </div>
+              )}
               <div className="autonomous-actions">
                 <button
                   onClick={() => void startAutonomousMode()}
-                  disabled={!autonomousTask.trim() || isAutonomousRunning}
+                  disabled={!autonomousTask.trim() || isAutonomousRunning || !isAuthValid}
                 >
                   {isAutonomousRunning ? 'Running…' : 'Start Autonomous'}
                 </button>

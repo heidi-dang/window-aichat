@@ -1,6 +1,7 @@
 import { pipeline, env } from '@xenova/transformers';
 import { Voy } from 'voy-search';
 import TreeSitterService from './TreeSitterService';
+import { getToken } from './authStorage';
 
 // Disable local model checks to prevent Vite from serving index.html for missing model files
 env.allowLocalModels = false;
@@ -69,7 +70,7 @@ class VectorStoreService {
     this.isIndexing = true;
     try {
         console.log('[VectorStore] Indexing workspace...');
-        const token = localStorage.getItem('token') || '';
+        const token = getToken();
         const listRes = await fetch(`${apiBase}/api/fs/list`, {
           headers: token ? { Authorization: `Bearer ${token}` } : undefined
         });

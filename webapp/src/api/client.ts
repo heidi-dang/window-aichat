@@ -1,3 +1,5 @@
+import { getToken } from '../utils/authStorage';
+
 export type ApiErrorEnvelope = {
   error: {
     code: string;
@@ -27,7 +29,7 @@ export const API_BASE =
   (import.meta as { env: Record<string, string | undefined> }).env?.VITE_API_BASE?.replace(/\/$/, '') || '';
 
 function withAuthHeaders(init?: RequestInit): RequestInit {
-  const token = localStorage.getItem('token') || '';
+  const token = getToken();
   if (!token) return init ?? {};
   const headers = new Headers(init?.headers ?? undefined);
   if (!headers.has('Authorization')) {

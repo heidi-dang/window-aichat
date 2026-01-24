@@ -1,5 +1,6 @@
 import WebContainerService from '../utils/WebContainerService';
 import VectorStoreService from '../utils/VectorStoreService';
+import { getToken } from '../utils/authStorage';
 
 interface AgentOptions {
   apiBase: string;
@@ -108,7 +109,7 @@ export class AgentLoop {
 
       // Persistence: Write to backend filesystem
       try {
-        const token = localStorage.getItem('token') || '';
+        const token = getToken();
         const saveRes = await fetch(`${options.apiBase}/api/fs/write`, {
           method: 'POST',
           headers: {
@@ -198,7 +199,7 @@ export class AgentLoop {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('token') || ''}`
+          ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {})
         },
         body: JSON.stringify({
           message: `${prompt}\n\nIMPORTANT: Return ONLY the code. If you create a file, add a comment on the first line like "// filename: myscript.js".`,
