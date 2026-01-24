@@ -18,7 +18,7 @@ interface PullRequest {
   targetBranch: string;
   author: string;
   createdAt: string;
-  status: 'open' | 'closed' | 'merged';
+  status: 'open' | 'closed' | 'merged' | 'approved';
   files: PullRequestFile[];
   aiAnalysis?: {
     summary: string;

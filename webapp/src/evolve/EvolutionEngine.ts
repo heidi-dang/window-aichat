@@ -1,6 +1,4 @@
-import VectorStoreService, { type SearchResult } from '../utils/VectorStoreService';
-import * as api from '../api/routes';
-import type { ChatUiMessage } from '../hooks/useChat';
+import VectorStoreService from '../utils/VectorStoreService';
 
 export interface CodePattern {
   id: string;
@@ -42,9 +40,10 @@ export class EvolutionEngine {
   private vectorStore = VectorStoreService.getInstance();
   private patterns: Map<string, CodePattern> = new Map();
   private insights: PredictiveInsight[] = [];
-  private isAnalyzing = false;
 
-  private constructor() {}
+  private constructor() {
+    void this.vectorStore.init?.();
+  }
 
   static getInstance(): EvolutionEngine {
     if (!EvolutionEngine.instance) {
@@ -431,11 +430,20 @@ export class EvolutionEngine {
   private async getAllCodeFiles(apiBase: string): Promise<string[]> {
     try {
       const response = await fetch(`${apiBase}/api/fs/list`);
+      if (!response.ok) {
+        console.warn('[EvolveAI] Failed to list files:', response.status, response.statusText);
+        return [];
+      }
       const files = await response.json();
+      if (!Array.isArray(files)) {
+        console.warn('[EvolveAI] Unexpected file list response:', files);
+        return [];
+      }
       return files
-        .filter((f: any) => f.type === 'file')
-        .filter((f: any) => f.name.match(/\.(ts|tsx|js|jsx)$/))
-        .map((f: any) => f.path);
+        .filter((f: any) => f?.type === 'file')
+        .filter((f: any) => typeof f?.name === 'string' && f.name.match(/\.(ts|tsx|js|jsx)$/))
+        .map((f: any) => f.path)
+        .filter((path: unknown): path is string => typeof path === 'string');
     } catch (error) {
       console.error('[EvolveAI] Failed to get code files:', error);
       return [];

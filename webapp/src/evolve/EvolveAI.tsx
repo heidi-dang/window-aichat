@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Badge } from '../components/ui/badge';
-import { Alert, AlertDescription } from '../components/ui/alert';
+import { Alert } from '../components/ui/alert';
 import { Lightbulb, TrendingUp, Shield, Zap, Code, CheckCircle, AlertTriangle } from 'lucide-react';
 import EvolutionEngine, { type PredictiveInsight, type EvolutionSuggestion } from './EvolutionEngine';
 
@@ -15,7 +15,6 @@ export const EvolveAI: React.FC<EvolveAIProps> = ({ apiBase }) => {
   const [insights, setInsights] = useState<PredictiveInsight[]>([]);
   const [suggestions, setSuggestions] = useState<EvolutionSuggestion[]>([]);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [selectedInsight, setSelectedInsight] = useState<PredictiveInsight | null>(null);
 
   useEffect(() => {
     const evolutionEngine = EvolutionEngine.getInstance();

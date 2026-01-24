@@ -32,6 +32,7 @@ export const LivingDocumentation: React.FC<LivingDocumentationProps> = ({ apiBas
 
   const analyzeCodebase = async () => {
     setIsAnalyzing(true);
+    void apiBase;
     try {
       // This would integrate with the EvolutionEngine to analyze code
       const mockSections: DocumentationSection[] = [
@@ -118,18 +119,6 @@ The EvolveAI system integrates seamlessly with existing Window-AIChat components
       console.error('[LivingDocumentation] Failed to sync:', error);
     } finally {
       setIsSyncing(false);
-    }
-  };
-
-  const updateSection = async (sectionId: string, newContent: string) => {
-    try {
-      setSections(prev => prev.map(section => 
-        section.id === sectionId 
-          ? { ...section, content: newContent, lastModified: Date.now(), needsUpdate: false }
-          : section
-      ));
-    } catch (error) {
-      console.error('[LivingDocumentation] Failed to update section:', error);
     }
   };
 
