@@ -154,10 +154,7 @@ class VectorStoreService {
       const id = `${filePath}#chunk${i}`;
       
       this.voy.add({
-        id,
-        title: filePath,
-        url: filePath,
-        embeddings: embedding
+        embeddings: [{ id, title: filePath, url: filePath, embeddings: embedding }]
       });
 
       this.documents[id] = {
@@ -180,11 +177,24 @@ class VectorStoreService {
     const queryEmbedding = Array.from(output.data);
 
     // Voy search returns { id: string, score: number }
-    const results = this.voy.search(queryEmbedding, limit) as unknown as { hits: Array<{ id: string; score: number }> };
+    const rawResults = this.voy.search(new Float32Array(queryEmbedding), limit) as unknown;
+    const results = rawResults as { hits?: unknown; neighbors?: unknown };
 
-    return results.hits
-      .filter((hit) => typeof hit.id === 'string' && typeof hit.score === 'number' && Boolean(this.documents[hit.id]))
-      .map((hit) => ({ ...this.documents[hit.id], score: hit.score }));
+    if (Array.isArray(results.hits)) {
+      const hits = results.hits as Array<{ id?: unknown; score?: unknown }>;
+      return hits
+        .filter((hit) => typeof hit.id === 'string' && typeof hit.score === 'number' && Boolean(this.documents[hit.id]))
+        .map((hit) => ({ ...this.documents[hit.id as string], score: hit.score as number }));
+    }
+
+    if (Array.isArray(results.neighbors)) {
+      const neighbors = results.neighbors as Array<{ id?: unknown }>;
+      return neighbors
+        .filter((n) => typeof n.id === 'string' && Boolean(this.documents[n.id]))
+        .map((n) => ({ ...this.documents[n.id as string], score: 0 }));
+    }
+
+    return [];
   }
 }
 

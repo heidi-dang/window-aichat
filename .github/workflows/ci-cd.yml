@@ -3,9 +3,15 @@ name: CI/CD Pipeline
 on:
   push:
     branches: [ main, master, develop ]
+    tags:
+      - 'v*'
   pull_request:
     branches: [ main, master ]
   workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 env:
   REGISTRY: ghcr.io
@@ -17,6 +23,7 @@ jobs:
   backend:
     name: Build Backend
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: read
       packages: write
@@ -33,9 +40,9 @@ jobs:
 
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install pytest pytest-cov black flake8
+          bash .github/scripts/retry.sh 5 2 -- python -m pip install --upgrade pip
+          bash .github/scripts/retry.sh 5 2 -- pip install -r requirements.txt
+          bash .github/scripts/retry.sh 5 2 -- pip install pytest pytest-cov black flake8
       
       - name: Lint with flake8
         run: |
@@ -54,6 +61,9 @@ jobs:
           else
             echo "No tests found, skipping..."
           fi
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
 
       # REQUIRED for cache-to: type=gha
       - name: Set up Docker Buildx
@@ -81,21 +91,27 @@ jobs:
             type=raw,value=latest,enable={{is_default_branch}}
       
       - name: Build and push backend Docker image
-        if: github.event_name != 'pull_request'
+        id: build-backend
         uses: docker/build-push-action@v5
         with:
           context: .
           file: ./Dockerfile.backend
-          push: true
+          push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta-backend.outputs.tags }}
           labels: ${{ steps.meta-backend.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          platforms: linux/amd64,linux/arm64
+
+      - name: Verify backend image published
+        if: github.event_name != 'pull_request'
+        run: bash .github/scripts/verify-ghcr.sh ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_BACKEND }} ${{ steps.build-backend.outputs.digest }}
 
   # Build and test frontend
   frontend:
     name: Build Frontend
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: read
       packages: write
@@ -113,23 +129,24 @@ jobs:
 
       - name: Install dependencies
         working-directory: ./webapp
-        run: npm ci --no-audit --no-fund
+        run: bash ../.github/scripts/retry.sh 5 2 -- npm ci --no-audit --no-fund
 
       - name: Lint frontend
         working-directory: ./webapp
-        run: npm run lint || true
+        run: npm run lint
       
       - name: Test frontend
         working-directory: ./webapp
-        run: npm test
+        run: npm run test --if-present
 
       - name: Build frontend
         working-directory: ./webapp
         env:
           NODE_OPTIONS: --max-old-space-size=4096
-          # Pass the backend URL to the frontend build for API calls
-          VITE_BACKEND_URL: http://backend:8000 # 'backend' is the service name in docker-compose
         run: npm run build
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
 
       # REQUIRED for cache-to: type=gha
       - name: Set up Docker Buildx
@@ -157,50 +174,124 @@ jobs:
             type=raw,value=latest,enable={{is_default_branch}}
       
       - name: Build and push frontend Docker image
-        if: github.event_name != 'pull_request'
+        id: build-frontend
         uses: docker/build-push-action@v5
         with:
           context: .
           file: ./Dockerfile.frontend
-          push: true
+          push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta-frontend.outputs.tags }}
           labels: ${{ steps.meta-frontend.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          platforms: linux/amd64,linux/arm64
+
+      - name: Verify frontend image published
+        if: github.event_name != 'pull_request'
+        run: bash .github/scripts/verify-ghcr.sh ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_FRONTEND }} ${{ steps.build-frontend.outputs.digest }}
 
   # Deploy (optional - can be triggered manually or on main branch)
   deploy:
     name: Deploy to Production
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     needs: [backend, frontend]
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    if: >
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     environment:
       name: production
       url: https://your-domain.duckdns.org
+    env:
+      SSH_HOST: ${{ secrets.SSH_HOST }}
+      SSH_USER: ${{ secrets.SSH_USER }}
+      SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+      SSH_PORT: ${{ secrets.SSH_PORT || '22' }}
+      GHCR_USER: ${{ secrets.GHCR_USER }}
+      GHCR_PAT: ${{ secrets.GHCR_PAT }}
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Deploy with Docker Compose
+      - name: Gate deploy on required secrets
+        id: gate
+        shell: bash
+        run: |
+          missing=0
+          for name in SSH_HOST SSH_USER SSH_PRIVATE_KEY GHCR_USER GHCR_PAT; do
+            if [ -z "${!name:-}" ]; then
+              echo "missing ${name}"
+              missing=1
+            fi
+          done
+          if [ "${missing}" -eq 1 ]; then
+            echo "enabled=false" >> "${GITHUB_OUTPUT}"
+          else
+            echo "enabled=true" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Ensure remote deploy directories
+        if: steps.gate.outputs.enabled == 'true'
         uses: appleboy/ssh-action@v1.0.0
         with:
-          host: ${{ secrets.SSH_HOST }}
-          username: ${{ secrets.SSH_USER }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          debug: true
+          host: ${{ env.SSH_HOST }}
+          username: ${{ env.SSH_USER }}
+          key: ${{ env.SSH_PRIVATE_KEY }}
+          port: ${{ env.SSH_PORT }}
+          timeout: 60s
+          command_timeout: 10m
+          script_stop: true
           script: |
+            set -euo pipefail
+            mkdir -p /opt/window-aichat/.github/scripts
+
+      - name: Upload deployment files
+        if: steps.gate.outputs.enabled == 'true'
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          debug: true
+          host: ${{ env.SSH_HOST }}
+          username: ${{ env.SSH_USER }}
+          key: ${{ env.SSH_PRIVATE_KEY }}
+          port: ${{ env.SSH_PORT }}
+          timeout: 60s
+          command_timeout: 10m
+          source: "docker-compose.prod.yml,nginx.conf,.github/scripts/healthcheck.sh"
+          target: /opt/window-aichat
+
+      - name: Deploy with Docker Compose
+        if: steps.gate.outputs.enabled == 'true'
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          debug: true
+          host: ${{ env.SSH_HOST }}
+          username: ${{ env.SSH_USER }}
+          key: ${{ env.SSH_PRIVATE_KEY }}
+          port: ${{ env.SSH_PORT }}
+          timeout: 60s
+          command_timeout: 15m
+          script_stop: true
+          script: |
+            set -euo pipefail
             cd /opt/window-aichat
-            # Pull latest code
-            git pull origin main
-            
-            # Login to GHCR (if not already logged in or token expired)
-            # echo ${{ secrets.GITHUB_TOKEN }} | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-            
-            # Pull latest images
-            docker-compose -f docker-compose.prod.yml pull
-            
-            # Restart services
-            docker-compose -f docker-compose.prod.yml up -d --build # Added --build to ensure latest changes are picked up
-            
-            # Cleanup unused images
+
+            export GHCR_REPO='${{ github.repository }}'
+            export IMAGE_TAG='latest'
+
+            echo "${GHCR_PAT}" | docker login ghcr.io -u "${GHCR_USER}" --password-stdin
+
+            if command -v docker-compose >/dev/null 2>&1; then
+              DC='docker-compose'
+            else
+              DC='docker compose'
+            fi
+
+            $DC -f docker-compose.prod.yml pull
+            $DC -f docker-compose.prod.yml up -d --remove-orphans
+
+            curl -fsS http://localhost:8000/docs >/dev/null
+            bash .github/scripts/healthcheck.sh http://localhost
+
             docker image prune -f
